@@ -68,6 +68,8 @@ _MODE_UI_OUTPUT_KEYS = (
     "repainting_end",
     "repaint_mode",
     "repaint_strength",
+    "retake_variance",
+    "retake_seed",
     "previous_generation_mode",
     "remix_help_group",
     "extract_help_group",

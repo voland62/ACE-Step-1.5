@@ -61,6 +61,8 @@ def generate_with_progress(
     latent_rescale,
     repaint_mode,
     repaint_strength,
+    retake_variance=0.0,
+    retake_seed="",
     progress=gr.Progress(track_tqdm=True),
 ):
     """Generate audio with progress tracking.
@@ -169,6 +171,9 @@ def generate_with_progress(
         latent_rescale=latent_rescale,
         repaint_mode=repaint_mode if repaint_mode else "balanced",
         repaint_strength=float(repaint_strength) if repaint_strength is not None else 0.5,
+        retake_variance=float(retake_variance) if retake_variance is not None else 0.0,
+        # Empty textbox -> None; otherwise a string is fine (handler.prepare_seeds parses it).
+        retake_seed=(retake_seed.strip() or None) if isinstance(retake_seed, str) else retake_seed,
     )
 
     if isinstance(seed, str) and seed.strip():

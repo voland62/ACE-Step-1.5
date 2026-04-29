@@ -125,6 +125,8 @@ def register_generation_run_handlers(context: GenerationWiringContext) -> None:
             generation_section["latent_rescale"],
             generation_section["repaint_mode"],
             generation_section["repaint_strength"],
+            generation_section["retake_variance"],
+            generation_section["retake_seed"],
             generation_section["autogen_checkbox"],
             results_section["current_batch_index"],
             results_section["total_batches"],
