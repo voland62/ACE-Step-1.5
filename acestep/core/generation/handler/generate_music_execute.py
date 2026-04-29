@@ -44,6 +44,8 @@ class GenerateMusicExecuteMixin:
         repaint_crossfade_frames: int = 10,
         repaint_injection_ratio: float = 0.5,
         task_type: str = "",
+        actual_retake_seed_list: Optional[List[int]] = None,
+        retake_variance: float = 0.0,
     ) -> Dict[str, Any]:
         """Invoke ``service_generate`` while maintaining background progress estimation.
 
@@ -103,6 +105,8 @@ class GenerateMusicExecuteMixin:
                     repaint_crossfade_frames=repaint_crossfade_frames,
                     repaint_injection_ratio=repaint_injection_ratio,
                     task_type=task_type,
+                    retake_seed=actual_retake_seed_list,
+                    retake_variance=retake_variance,
                 )
             except Exception as exc:
                 _error["exc"] = exc

@@ -85,6 +85,8 @@ class ServiceGenerateExecuteMixin:
         dcw_scaler: float = 0.05,
         dcw_high_scaler: float = 0.02,
         dcw_wavelet: str = "haar",
+        retake_seed: Any = None,
+        retake_variance: float = 0.0,
     ) -> Dict[str, Any]:
         """Build kwargs passed to model generation backends."""
         repaint_mask = payload.get("repaint_mask")
@@ -126,6 +128,8 @@ class ServiceGenerateExecuteMixin:
             "dcw_scaler": dcw_scaler,
             "dcw_high_scaler": dcw_high_scaler,
             "dcw_wavelet": dcw_wavelet,
+            "retake_seed": retake_seed,
+            "retake_variance": retake_variance,
         }
         if timesteps is not None:
             kwargs["timesteps"] = torch.tensor(timesteps, dtype=torch.float32, device=self.device)
@@ -139,6 +143,8 @@ class ServiceGenerateExecuteMixin:
         infer_method: str,
         shift: float,
         audio_cover_strength: float,
+        retake_seed: Any = None,
+        retake_variance: float = 0.0,
     ) -> Tuple[Dict[str, Any], torch.Tensor, torch.Tensor, torch.Tensor]:
         """Execute condition preparation and diffusion using MLX or PyTorch backend."""
         dit_backend = (
@@ -229,6 +235,8 @@ class ServiceGenerateExecuteMixin:
                             dcw_scaler=generate_kwargs.get("dcw_scaler", 0.05),
                             dcw_high_scaler=generate_kwargs.get("dcw_high_scaler", 0.02),
                             dcw_wavelet=generate_kwargs.get("dcw_wavelet", "haar"),
+                            retake_seed=retake_seed,
+                            retake_variance=retake_variance,
                         )
                         _tc = outputs.get("time_costs", {})
                         logger.info(

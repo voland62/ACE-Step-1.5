@@ -1853,6 +1853,8 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
         silence_latent: Optional[torch.FloatTensor] = None,
         attention_mask: torch.Tensor = None,
         seed: int = None,
+        retake_seed: Optional[Union[int, List[int]]] = None,
+        retake_variance: float = 0.0,
         fix_nfe: int = 8,
         infer_steps: Optional[int] = None,
         infer_method: str = "ode",
@@ -2025,6 +2027,12 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
         start_time = end_time
         
         noise = self.prepare_noise(context_latents, seed)
+        # Retake mixing: variance-preserving blend with an independent noise draw.
+        # v=0 -> noise unchanged; v=1 -> equivalent to using retake_seed as the main seed.
+        if retake_variance > 0.0:
+            retake_noise = self.prepare_noise(context_latents, retake_seed)
+            v_rad = retake_variance * (math.pi / 2.0)
+            noise = math.cos(v_rad) * noise + math.sin(v_rad) * retake_noise
         bsz, device, dtype = context_latents.shape[0], context_latents.device, context_latents.dtype
         past_key_values = EncoderDecoderCache(DynamicCache(), DynamicCache())
         

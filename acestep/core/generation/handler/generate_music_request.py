@@ -62,6 +62,8 @@ class GenerateMusicRequestMixin:
         repainting_end: Optional[float],
         seed: Optional[Union[str, float, int]],
         use_random_seed: bool,
+        retake_seed: Optional[Union[str, float, int]] = None,
+        retake_variance: float = 0.0,
     ) -> Dict[str, Any]:
         """Prepare runtime batch/seed/duration values for generation."""
         self.current_offload_cost = 0.0
@@ -69,6 +71,17 @@ class GenerateMusicRequestMixin:
         actual_batch_size = max(1, actual_batch_size)
         actual_batch_size = self._vram_guard_reduce_batch(actual_batch_size, audio_duration=audio_duration)
         actual_seed_list, seed_value_for_ui = self.prepare_seeds(actual_batch_size, seed, use_random_seed)
+
+        # Retake seeds are only resolved when the variance gate is open. Reusing
+        # prepare_seeds here lets empty/`-1` user input fall back to fresh random
+        # seeds, matching the main seed semantics so that the recorded
+        # retake_seed_value_for_ui is reproducible.
+        actual_retake_seed_list: Optional[List[int]] = None
+        retake_seed_value_for_ui = ""
+        if retake_variance > 0.0:
+            actual_retake_seed_list, retake_seed_value_for_ui = self.prepare_seeds(
+                actual_batch_size, retake_seed, use_random_seed=False
+            )
 
         if audio_duration is not None and float(audio_duration) <= 0:
             audio_duration = None
@@ -79,6 +92,8 @@ class GenerateMusicRequestMixin:
             "actual_batch_size": actual_batch_size,
             "actual_seed_list": actual_seed_list,
             "seed_value_for_ui": seed_value_for_ui,
+            "actual_retake_seed_list": actual_retake_seed_list,
+            "retake_seed_value_for_ui": retake_seed_value_for_ui,
             "audio_duration": audio_duration,
             "repainting_end": repainting_end,
         }

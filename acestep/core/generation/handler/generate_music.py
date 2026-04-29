@@ -223,6 +223,8 @@ class GenerateMusicMixin:
         repaint_wav_crossfade_sec: float = 0.0,
         repaint_mode: str = "balanced",
         repaint_strength: float = 0.5,
+        retake_seed: Optional[Union[str, float, int]] = None,
+        retake_variance: float = 0.0,
         progress=None,
     ) -> Dict[str, Any]:
         """Generate audio from text/reference inputs and return response payload.
@@ -301,10 +303,14 @@ class GenerateMusicMixin:
             repainting_end=repainting_end,
             seed=seed,
             use_random_seed=use_random_seed,
+            retake_seed=retake_seed,
+            retake_variance=retake_variance,
         )
         actual_batch_size = runtime["actual_batch_size"]
         actual_seed_list = runtime["actual_seed_list"]
         seed_value_for_ui = runtime["seed_value_for_ui"]
+        actual_retake_seed_list = runtime["actual_retake_seed_list"]
+        retake_seed_value_for_ui = runtime["retake_seed_value_for_ui"]
         audio_duration = runtime["audio_duration"]
         repainting_end = runtime["repainting_end"]
 
@@ -383,6 +389,8 @@ class GenerateMusicMixin:
                 repaint_crossfade_frames=resolved_cf_frames,
                 repaint_injection_ratio=injection_ratio,
                 task_type=task_type,
+                actual_retake_seed_list=actual_retake_seed_list,
+                retake_variance=retake_variance,
             )
             outputs = service_run["outputs"]
             infer_steps_for_progress = service_run["infer_steps_for_progress"]
@@ -425,6 +433,8 @@ class GenerateMusicMixin:
                 seed_value_for_ui=seed_value_for_ui,
                 actual_batch_size=actual_batch_size,
                 progress=progress,
+                retake_seed_value_for_ui=retake_seed_value_for_ui,
+                retake_variance=retake_variance,
             )
             # Clear GPU tensor references from the mutable outputs dict so
             # accelerator memory is reclaimable before the next generation.

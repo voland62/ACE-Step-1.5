@@ -56,6 +56,8 @@ class ServiceGenerateMixin:
         dcw_high_scaler: float = 0.02,
         dcw_wavelet: str = "haar",
         task_type: str = "",
+        retake_seed: Optional[Union[int, List[int]]] = None,
+        retake_variance: float = 0.0,
     ) -> Dict[str, Any]:
         """Generate music latents and metadata from text/audio conditioning inputs.
 
@@ -169,6 +171,8 @@ class ServiceGenerateMixin:
             dcw_scaler=dcw_scaler,
             dcw_high_scaler=dcw_high_scaler,
             dcw_wavelet=dcw_wavelet,
+            retake_seed=retake_seed,
+            retake_variance=retake_variance,
         )
         outputs, encoder_hidden_states, encoder_attention_mask, context_latents = (
             self._execute_service_generate_diffusion(
@@ -178,6 +182,8 @@ class ServiceGenerateMixin:
                 infer_method=infer_method,
                 shift=shift,
                 audio_cover_strength=audio_cover_strength,
+                retake_seed=retake_seed,
+                retake_variance=retake_variance,
             )
         )
         return self._attach_service_generate_outputs(
