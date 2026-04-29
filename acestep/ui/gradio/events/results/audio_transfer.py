@@ -73,11 +73,11 @@ def send_audio_to_remix(audio_file, lm_metadata, current_lyrics, current_caption
         llm_handler: Optional LLM handler.
 
     Returns:
-        50-tuple of Gradio updates (4 data + 46 mode-UI).
+        52-tuple of Gradio updates (4 data + 48 mode-UI).
     """
-    n_outputs = 50
     if audio_file is None:
-        return (gr.skip(),) * n_outputs
+        mode_updates = compute_mode_ui_updates("Remix", llm_handler, previous_mode=current_mode)
+        return (gr.skip(), gr.skip(), gr.skip(), gr.skip()) + (gr.skip(),) * len(mode_updates)
 
     lyrics, caption = _extract_metadata_for_editing(lm_metadata, current_lyrics, current_caption)
     mode_updates = list(compute_mode_ui_updates("Remix", llm_handler, previous_mode=current_mode))
@@ -103,11 +103,11 @@ def send_audio_to_repaint(audio_file, lm_metadata, current_lyrics, current_capti
         llm_handler: Optional LLM handler.
 
     Returns:
-        50-tuple of Gradio updates (4 data + 46 mode-UI).
+        52-tuple of Gradio updates (4 data + 48 mode-UI).
     """
-    n_outputs = 50
     if audio_file is None:
-        return (gr.skip(),) * n_outputs
+        mode_updates = compute_mode_ui_updates("Repaint", llm_handler, previous_mode=current_mode)
+        return (gr.skip(), gr.skip(), gr.skip(), gr.skip()) + (gr.skip(),) * len(mode_updates)
 
     lyrics, caption = _extract_metadata_for_editing(lm_metadata, current_lyrics, current_caption)
     mode_updates = list(compute_mode_ui_updates("Repaint", llm_handler, previous_mode=current_mode))
