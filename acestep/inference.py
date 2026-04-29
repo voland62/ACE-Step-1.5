@@ -161,6 +161,10 @@ class GenerationParams:
     repaint_wav_crossfade_sec: float = 0.0  # waveform-level splice crossfade (seconds, 0=hard cut)
     repaint_mode: str = "balanced"  # "conservative", "balanced", or "aggressive"
     repaint_strength: float = 0.5  # 0.0=aggressive, 1.0=conservative (balanced mode only)
+    # Retake (issue #1155): variance-preserving noise mixing for variation generation.
+    # retake_variance=0 is a no-op; the retake_seed is only consumed when variance>0.
+    retake_seed: Optional[Union[str, int]] = None
+    retake_variance: float = 0.0
     audio_cover_strength: float = 1.0
     cover_noise_strength: float = 0.0  # 0=pure noise (no cover), 1=closest to src audio
 
@@ -649,6 +653,8 @@ def generate_music(
             "repaint_wav_crossfade_sec": params.repaint_wav_crossfade_sec,
             "repaint_mode": params.repaint_mode,
             "repaint_strength": params.repaint_strength,
+            "retake_seed": params.retake_seed,
+            "retake_variance": params.retake_variance,
             "instruction": params.instruction,
             "audio_cover_strength": params.audio_cover_strength,
             "cover_noise_strength": params.cover_noise_strength,
