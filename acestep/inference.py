@@ -718,6 +718,19 @@ def generate_music(
         if save_dir is not None:
             os.makedirs(save_dir, exist_ok=True)
 
+        # Resolve per-sample retake seeds (handler returns a comma-joined string
+        # of the actually-used seeds when retake_variance > 0).  We thread these
+        # back into per-audio params so the UUID hash includes the seed that
+        # actually produced the output, not the (possibly None) caller input.
+        # Without this, repeated runs with retake_seed=None and a fixed main
+        # seed would collide on UUID even though the audio differs.
+        retake_seed_value_str = (dit_extra_outputs or {}).get("retake_seed_value", "") or ""
+        retake_seeds_resolved = (
+            [s.strip() for s in retake_seed_value_str.split(",") if s.strip()]
+            if retake_seed_value_str
+            else []
+        )
+
         # Build audios list for GenerationResult with params and save files
         # Audio saving and UUID generation handled here, outside of handler
         audios = []
@@ -727,6 +740,12 @@ def generate_music(
 
             # Update audio-specific values
             audio_params["seed"] = seed_list[idx] if idx < len(seed_list) else None
+            if retake_seeds_resolved:
+                audio_params["retake_seed"] = (
+                    retake_seeds_resolved[idx]
+                    if idx < len(retake_seeds_resolved)
+                    else retake_seeds_resolved[0]
+                )
 
             # Add LM-generated audio codes (only if non-empty, to preserve
             # user-provided codes when LM was used only for CoT metas)
