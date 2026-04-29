@@ -27,8 +27,8 @@ from .generation_tab_secondary_controls import (
     build_cover_strength_controls,
     build_custom_mode_controls,
     build_repainting_controls,
-    build_retake_controls,
 )
+from .generation_tab_retake_controls import build_retake_controls
 
 
 def create_generation_tab_section(
