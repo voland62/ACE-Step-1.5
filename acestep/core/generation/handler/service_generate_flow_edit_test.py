@@ -97,6 +97,24 @@ class DispatchFlowEditTests(unittest.TestCase):
         self.assertEqual(kwargs["edit_n_max"], 1.0)
         self.assertEqual(kwargs["edit_n_avg"], 1)
 
+    def test_retake_seed_forwarded_from_generate_kwargs(self):
+        """Regression for codex P2 round-2 finding.
+
+        Pre-fix the dispatch only forwarded the main ``seed`` and dropped
+        ``retake_seed`` from ``generate_kwargs``, so retake variation /
+        reproducibility silently fell back to the main seed under
+        ``task_type="edit"``.
+        """
+        handler = FakeHandler()
+        dispatch_flow_edit(
+            handler, payload=make_payload(),
+            generate_kwargs={"infer_steps": 4, "retake_seed": [99, 100]},
+            seed_param=42, edit_ctx=make_edit_ctx(),
+        )
+        kwargs = handler.model.flowedit_generate_audio.call_args.kwargs
+        self.assertEqual(kwargs["seed"], 42)
+        self.assertEqual(kwargs["retake_seed"], [99, 100])
+
 
 class EditSkipsLmPhaseTests(unittest.TestCase):
     """Verify ``inference.generate_music`` skips LM Phase 1 for ``edit``."""

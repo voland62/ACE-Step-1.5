@@ -108,6 +108,10 @@ def dispatch_flow_edit(
                 target_lyric_hidden_states=tar_lyric_hs,
                 target_lyric_attention_mask=tar_lyric_am,
                 seed=seed_param,
+                # Retake seed (#1157) drives flowedit's per-step
+                # forward-noise generators so variation/reproducibility
+                # works the same way it does in regular generation.
+                retake_seed=generate_kwargs.get("retake_seed"),
                 infer_steps=generate_kwargs.get("infer_steps"),
                 timesteps=generate_kwargs.get("timesteps"),
                 diffusion_guidance_scale=generate_kwargs.get("diffusion_guidance_scale", 1.0),
