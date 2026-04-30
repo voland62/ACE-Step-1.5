@@ -105,6 +105,7 @@ class GenerateMusicRequestMixin:
         audio_code_string: Union[str, List[str]],
         actual_batch_size: int,
         task_type: str,
+        flow_edit_morph: bool = False,
     ) -> Tuple[Optional[List[List[torch.Tensor]]], Optional[torch.Tensor], Optional[Dict[str, Any]]]:
         """Prepare reference/source audio tensors and return early error payload when invalid."""
         if reference_audio is not None:
@@ -126,11 +127,35 @@ class GenerateMusicRequestMixin:
             refer_audios = [[torch.zeros(2, 30 * self.sample_rate)] for _ in range(actual_batch_size)]
 
         processed_src_audio = None
-        # Flow-edit (#1156) needs the source audio just like cover/repaint/etc.
-        _src_audio_required_tasks = {"cover", "cover-nofsq", "repaint", "lego", "extract", "edit"}
-        if task_type == "text2music":
+        _src_audio_required_tasks = {"cover", "cover-nofsq", "repaint", "lego", "extract"}
+        if task_type == "text2music" and not flow_edit_morph:
             if src_audio is not None:
                 logger.info("[generate_music] text2music task does not use src_audio, ignoring")
+        elif task_type == "text2music" and flow_edit_morph:
+            # Treat empty string / empty list as missing too — gradio
+            # occasionally hands ``""`` instead of ``None`` for cleared
+            # components.
+            src_audio_missing = (
+                src_audio is None
+                or (isinstance(src_audio, str) and not src_audio.strip())
+                or (isinstance(src_audio, (list, tuple)) and not src_audio)
+            )
+            if src_audio_missing:
+                return None, None, {
+                    "audios": [],
+                    "status_message": "Flow-edit morph requires a source audio. Please upload one or disable Smooth morph.",
+                    "extra_outputs": {}, "success": False,
+                    "error": "flow_edit_morph=True requires src_audio",
+                }
+            logger.info("[generate_music] text2music + flow_edit_morph: encoding src_audio for V_delta integration")
+            processed_src_audio = self.process_src_audio(src_audio)
+            if processed_src_audio is None:
+                return None, None, {
+                    "audios": [],
+                    "status_message": "Flow-edit morph: source audio is invalid, unreadable, or silent.",
+                    "extra_outputs": {}, "success": False,
+                    "error": "Invalid source audio for flow_edit_morph",
+                }
         elif src_audio is not None:
             if self._has_non_empty_audio_codes(audio_code_string):
                 logger.info("[generate_music] Audio codes provided, ignoring src_audio and using codes instead")
