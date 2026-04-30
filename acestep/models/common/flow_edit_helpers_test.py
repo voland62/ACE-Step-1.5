@@ -7,10 +7,13 @@ import torch
 from acestep.models.common.apg_guidance import MomentumBuffer
 from acestep.models.common.flow_edit_helpers import (
     apply_cfg_branch,
-    apply_velocity_post,
+    apply_velocity_clamp,
+    apply_velocity_ema,
     build_timestep_schedule,
     draw_fwd_noise,
     pack_for_cfg,
+    restore_and_advance_momentum,
+    snapshot_momentum,
 )
 
 
@@ -73,38 +76,77 @@ class ApplyCfgBranchTests(unittest.TestCase):
         self.assertFalse(torch.equal(out, self.pred_cond))
 
 
-class ApplyVelocityPostTests(unittest.TestCase):
-    """Velocity-norm clamp + EMA must be no-op when both gates are zero."""
+class ApplyVelocityClampTests(unittest.TestCase):
+    """Velocity-norm clamp must be a no-op when threshold is 0."""
 
-    def test_no_clamp_no_ema_is_noop(self):
+    def test_threshold_zero_is_noop(self):
         torch.manual_seed(0)
         vt = torch.randn(2, 4, 8)
         xt = torch.randn(2, 4, 8)
-        out = apply_velocity_post(vt, xt, None, norm_threshold=0.0, ema_factor=0.0)
-        self.assertTrue(torch.equal(out, vt))
+        self.assertTrue(torch.equal(apply_velocity_clamp(vt, xt, 0.0), vt))
 
     def test_clamp_reduces_outlier_norms(self):
         vt = torch.full((1, 4, 8), 100.0)
         xt = torch.full((1, 4, 8), 1.0)
-        out = apply_velocity_post(vt, xt, None, norm_threshold=2.0, ema_factor=0.0)
-        # Output norm should be near 2*||xt|| (the clamp target).
+        out = apply_velocity_clamp(vt, xt, 2.0)
         out_norm = torch.norm(out, dim=(1, 2)).item()
         xt_norm = torch.norm(xt, dim=(1, 2)).item()
         self.assertAlmostEqual(out_norm, 2.0 * xt_norm, places=2)
 
+
+class ApplyVelocityEmaTests(unittest.TestCase):
+    """EMA smoothing: per-timestep blend, not per-MC-draw (regression for codex P2)."""
+
     def test_ema_no_prev_returns_vt(self):
-        torch.manual_seed(1)
         vt = torch.randn(1, 4, 8)
-        out = apply_velocity_post(vt, vt, None, norm_threshold=0.0, ema_factor=0.5)
-        self.assertTrue(torch.equal(out, vt))
+        self.assertTrue(torch.equal(apply_velocity_ema(vt, None, 0.5), vt))
+
+    def test_ema_zero_factor_returns_vt(self):
+        vt = torch.randn(1, 4, 8)
+        prev = torch.randn(1, 4, 8)
+        self.assertTrue(torch.equal(apply_velocity_ema(vt, prev, 0.0), vt))
 
     def test_ema_with_prev_blends(self):
-        torch.manual_seed(2)
         vt = torch.ones(1, 4, 8)
         prev = torch.zeros(1, 4, 8)
-        out = apply_velocity_post(vt, vt, prev, norm_threshold=0.0, ema_factor=0.3)
+        out = apply_velocity_ema(vt, prev, 0.3)
         # 0.7*1 + 0.3*0 = 0.7
         self.assertTrue(torch.allclose(out, torch.full_like(vt, 0.7)))
+
+
+class MomentumSnapshotTests(unittest.TestCase):
+    """Snapshot/restore must isolate APG momentum across MC draws."""
+
+    def test_snapshot_then_advance_matches_single_update(self):
+        """One pre-step snapshot + one final update == one direct update."""
+        buf_a, buf_b = MomentumBuffer(), MomentumBuffer()
+        buf_a.update(torch.tensor([1.0, 2.0]))
+        # Snapshot AFTER the prev-step state.
+        snap_a, snap_b = snapshot_momentum(buf_a, buf_b)
+        # Simulate inner loop "polluting" buf_a with a diff that should NOT
+        # carry forward — we restore-and-advance with avg_diff outside.
+        buf_a.update(torch.tensor([99.0, 99.0]))
+        # Reference: apply only the avg_diff once from the snapshot.
+        ref = MomentumBuffer()
+        ref.update(torch.tensor([1.0, 2.0]))
+        ref.update(torch.tensor([3.0, 4.0]))
+        # Restore and advance once with the avg.
+        restore_and_advance_momentum(
+            buf_a, buf_b, snap_a, snap_b,
+            avg_diff_src=torch.tensor([3.0, 4.0]),
+            avg_diff_tar=torch.tensor([5.0, 6.0]),
+        )
+        self.assertTrue(torch.equal(buf_a.running_average, ref.running_average))
+
+    def test_no_cfg_diff_just_rolls_back(self):
+        """When CFG is inactive (avg_diff is None) the buffer rolls back."""
+        buf_a, buf_b = MomentumBuffer(), MomentumBuffer()
+        buf_a.update(torch.tensor([1.0]))
+        snap_a, snap_b = snapshot_momentum(buf_a, buf_b)
+        # Simulate pollution.
+        buf_a.update(torch.tensor([42.0]))
+        restore_and_advance_momentum(buf_a, buf_b, snap_a, snap_b, None, None)
+        self.assertTrue(torch.equal(buf_a.running_average, snap_a))
 
 
 class DrawFwdNoiseTests(unittest.TestCase):

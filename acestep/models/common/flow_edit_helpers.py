@@ -69,26 +69,70 @@ def apply_cfg_branch(
     )
 
 
-def apply_velocity_post(
+def apply_velocity_clamp(
     vt: torch.Tensor,
     xt: torch.Tensor,
-    prev_vt: Optional[torch.Tensor],
     norm_threshold: float,
+) -> torch.Tensor:
+    """Per-trajectory velocity-norm clamp.  No-op when ``norm_threshold <= 0``."""
+    if norm_threshold <= 0.0:
+        return vt
+    vt_norm = torch.norm(vt, dim=(1, 2), keepdim=True)
+    xt_norm = torch.norm(xt, dim=(1, 2), keepdim=True) + 1e-10
+    scale = torch.clamp(norm_threshold * xt_norm / (vt_norm + 1e-10), max=1.0)
+    return vt * scale
+
+
+def apply_velocity_ema(
+    vt: torch.Tensor,
+    prev_vt: Optional[torch.Tensor],
     ema_factor: float,
 ) -> torch.Tensor:
-    """Per-trajectory velocity-norm clamp and EMA smoothing.
+    """EMA smoothing across *timesteps* (not across n_avg draws).
 
-    Mirrors the inline post-processing in ``generate_audio`` so flow-edit
-    behaves identically to regular generation when retake/CFG are off.
+    Caller is responsible for invoking this once per scheduler step on
+    the averaged velocity.  Applying it inside the n_avg loop with a
+    mutating ``prev_vt`` would leak earlier draws into later ones.
     """
-    if norm_threshold > 0.0:
-        vt_norm = torch.norm(vt, dim=(1, 2), keepdim=True)
-        xt_norm = torch.norm(xt, dim=(1, 2), keepdim=True) + 1e-10
-        scale = torch.clamp(norm_threshold * xt_norm / (vt_norm + 1e-10), max=1.0)
-        vt = vt * scale
-    if ema_factor > 0.0 and prev_vt is not None:
-        vt = (1.0 - ema_factor) * vt + ema_factor * prev_vt
-    return vt
+    if ema_factor <= 0.0 or prev_vt is None:
+        return vt
+    return (1.0 - ema_factor) * vt + ema_factor * prev_vt
+
+
+def snapshot_momentum(
+    src_momentum: MomentumBuffer,
+    tar_momentum: MomentumBuffer,
+):
+    """Capture the running averages so the inner n_avg loop can reset them.
+
+    APG's running average is meant to advance *once per scheduler step*;
+    if we let ``apply_cfg_branch`` mutate the buffer on every n_avg
+    draw, guidance becomes draw-order- and ``n_avg``-dependent.  Pair
+    this with :func:`restore_and_advance_momentum` after the loop.
+    """
+    return src_momentum.running_average, tar_momentum.running_average
+
+
+def restore_and_advance_momentum(
+    src_momentum: MomentumBuffer,
+    tar_momentum: MomentumBuffer,
+    src_pre,
+    tar_pre,
+    avg_diff_src: Optional[torch.Tensor],
+    avg_diff_tar: Optional[torch.Tensor],
+) -> None:
+    """Reset to pre-step state and advance once with the averaged diff.
+
+    ``avg_diff_*`` is ``None`` when CFG was inactive this step (no
+    averaged diff exists); in that case the buffer simply rolls back
+    to its pre-step state.
+    """
+    src_momentum.running_average = src_pre
+    tar_momentum.running_average = tar_pre
+    if avg_diff_src is not None:
+        src_momentum.update(avg_diff_src)
+    if avg_diff_tar is not None:
+        tar_momentum.update(avg_diff_tar)
 
 
 def draw_fwd_noise(

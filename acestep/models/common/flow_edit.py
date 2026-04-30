@@ -13,13 +13,16 @@ Edit window step::
     V_delta_avg += (1/n_avg) · (V_tar - V_src)
     zt_edit   += (t_prev - t_curr) · V_delta_avg
 
-After ``i ≥ n_max`` we Euler-step ``zt_edit`` with the *target* condition
-only, denoising the edited content to a clean latent.
+After ``i ≥ n_max`` we Euler-step a target-only running variable
+``xt_tar = zt_edit + xt_src - x_src``, denoising the edited content.
 
-v1 supports: euler + plain CFG + APG + CFG interval + velocity clamp /
-EMA, all with **independent state per trajectory** (one MomentumBuffer /
-prev_vt for src, another for tar).  DCW, heun, ADG are deferred to
-follow-up PRs (each needs paired-forward derivation).
+v1 supports euler + plain CFG + APG + CFG interval + velocity clamp/EMA,
+all with **independent state per trajectory** (separate APG momentum,
+prev_vt, KV cache for src and tar).  Inside the n_avg inner loop APG
+momentum is snapshot-and-restored so each MC draw uses the same
+pre-step state — without that the buffer would advance n_avg times,
+making guidance depend on draw order.  EMA is applied once per step
+on the averaged velocity.  DCW, heun, ADG are deferred to follow-ups.
 
 Helpers live in :mod:`.flow_edit_helpers` per the 200 LOC module cap.
 """
@@ -37,10 +40,13 @@ from transformers.cache_utils import DynamicCache, EncoderDecoderCache
 from .apg_guidance import MomentumBuffer
 from .flow_edit_helpers import (
     apply_cfg_branch,
-    apply_velocity_post,
+    apply_velocity_clamp,
+    apply_velocity_ema,
     build_timestep_schedule,
     draw_fwd_noise,
     pack_for_cfg,
+    restore_and_advance_momentum,
+    snapshot_momentum,
 )
 
 
@@ -84,8 +90,6 @@ def flowedit_sampling_loop(
     t = build_timestep_schedule(infer_steps, shift, timesteps, device, dtype)
     infer_steps = int(t.shape[0] - 1)
     n_min_step, n_max_step = int(infer_steps * n_min), int(infer_steps * n_max)
-
-    # Flow-edit accumulator starts at the source and gets pushed toward the target.
     zt_edit = src_latents.clone()
     do_cfg = diffusion_guidance_scale > 1.0
 
@@ -98,19 +102,12 @@ def flowedit_sampling_loop(
         tar_context_latents, attention_mask, null_condition_emb, do_cfg,
     )
 
-    # Independent KV cache, APG momentum, and EMA prev_vt per trajectory.
     src_kv = EncoderDecoderCache(DynamicCache(), DynamicCache())
     tar_kv = EncoderDecoderCache(DynamicCache(), DynamicCache())
     src_momentum, tar_momentum = MomentumBuffer(), MomentumBuffer()
     prev_vt_src: Optional[torch.Tensor] = None
     prev_vt_tar: Optional[torch.Tensor] = None
-    # ``xt_tar`` is the post-window running variable.  It's initialised at
-    # ``step_idx == n_max_step`` from the affine shift ``zt_edit + xt_src
-    # - x_src`` and then Euler-evolved with the target velocity (matches
-    # 1.0's flowedit_diffusion_process tail).  When ``n_max == 1.0`` it
-    # stays None and the function returns ``zt_edit``.
-    xt_tar: Optional[torch.Tensor] = None
-
+    xt_tar: Optional[torch.Tensor] = None  # post-window running variable
     iterator = zip(t[:-1], t[1:])
     if use_progress_bar:
         iterator = tqdm(iterator, total=infer_steps, desc="flow-edit")
@@ -124,7 +121,6 @@ def flowedit_sampling_loop(
     total_start = time.time()
 
     def _fwd(zt, pack, t_curr, kv):
-        """Decoder forward; returns ``(vt, new_kv)``.  Doubles ``zt`` for CFG."""
         enc_hs, enc_am, ctx, attn = pack
         x = torch.cat([zt, zt], dim=0) if do_cfg else zt
         t_tensor = t_curr * torch.ones((x.shape[0],), device=device, dtype=dtype)
@@ -146,39 +142,42 @@ def flowedit_sampling_loop(
         )
 
         if step_idx < n_max_step:
-            # Edit window: integrate V_delta = V_tar - V_src over n_avg draws.
-            # ``prev_vt_*`` must stay frozen at the *previous step*'s value
-            # for the entire inner loop — otherwise later draws would EMA
-            # against earlier draws of the same step, biasing the Monte
-            # Carlo average and making the result depend on draw order.
+            # Snapshot APG so each MC draw starts from the same pre-step
+            # momentum; we apply one update with the averaged diff after.
+            src_pre, tar_pre = snapshot_momentum(src_momentum, tar_momentum)
             V_src_sum = torch.zeros_like(zt_edit)
             V_tar_sum = torch.zeros_like(zt_edit)
+            diff_src_sum: Optional[torch.Tensor] = None
+            diff_tar_sum: Optional[torch.Tensor] = None
             for _ in range(n_avg):
+                src_momentum.running_average = src_pre
+                tar_momentum.running_average = tar_pre
                 fwd_noise = draw_fwd_noise(src_latents.shape, retake_generators, device, dtype)
                 zt_src = (1.0 - t_curr_f) * src_latents + t_curr_f * fwd_noise
                 zt_tar = zt_edit + zt_src - src_latents
                 pred_src, src_kv = _fwd(zt_src, src_pack, t_curr, src_kv)
                 pred_tar, tar_kv = _fwd(zt_tar, tar_pack, t_curr, tar_kv)
+                if do_cfg and apply_cfg_now:
+                    cs, us = pred_src.chunk(2)
+                    ct, ut = pred_tar.chunk(2)
+                    diff_src_sum = (cs - us) if diff_src_sum is None else diff_src_sum + (cs - us)
+                    diff_tar_sum = (ct - ut) if diff_tar_sum is None else diff_tar_sum + (ct - ut)
                 V_src = apply_cfg_branch(pred_src, do_cfg, apply_cfg_now,
                                          diffusion_guidance_scale, src_momentum)
                 V_tar = apply_cfg_branch(pred_tar, do_cfg, apply_cfg_now,
                                          diffusion_guidance_scale, tar_momentum)
-                V_src = apply_velocity_post(V_src, zt_src, prev_vt_src,
-                                            velocity_norm_threshold, velocity_ema_factor)
-                V_tar = apply_velocity_post(V_tar, zt_tar, prev_vt_tar,
-                                            velocity_norm_threshold, velocity_ema_factor)
-                V_src_sum = V_src_sum + V_src
-                V_tar_sum = V_tar_sum + V_tar
-            V_src_avg = V_src_sum / n_avg
-            V_tar_avg = V_tar_sum / n_avg
-            # Update EMA carry-over once the step's effective velocity is known.
+                V_src_sum = V_src_sum + apply_velocity_clamp(V_src, zt_src, velocity_norm_threshold)
+                V_tar_sum = V_tar_sum + apply_velocity_clamp(V_tar, zt_tar, velocity_norm_threshold)
+            restore_and_advance_momentum(
+                src_momentum, tar_momentum, src_pre, tar_pre,
+                None if diff_src_sum is None else diff_src_sum / n_avg,
+                None if diff_tar_sum is None else diff_tar_sum / n_avg,
+            )
+            V_src_avg = apply_velocity_ema(V_src_sum / n_avg, prev_vt_src, velocity_ema_factor)
+            V_tar_avg = apply_velocity_ema(V_tar_sum / n_avg, prev_vt_tar, velocity_ema_factor)
             prev_vt_src, prev_vt_tar = V_src_avg, V_tar_avg
             zt_edit = zt_edit + dt_b * (V_tar_avg - V_src_avg)
         else:
-            # Past the edit window: regular Euler with target cond on the
-            # affine-shifted running variable.  Initialised once at the
-            # transition (``step_idx == n_max_step``) from the same
-            # forward-diffused source the edit step uses.
             if xt_tar is None:
                 fwd_noise = draw_fwd_noise(src_latents.shape, retake_generators, device, dtype)
                 xt_src = (1.0 - t_curr_f) * src_latents + t_curr_f * fwd_noise
@@ -186,8 +185,8 @@ def flowedit_sampling_loop(
             pred_tar, tar_kv = _fwd(xt_tar, tar_pack, t_curr, tar_kv)
             V_tar = apply_cfg_branch(pred_tar, do_cfg, apply_cfg_now,
                                      diffusion_guidance_scale, tar_momentum)
-            V_tar = apply_velocity_post(V_tar, xt_tar, prev_vt_tar,
-                                        velocity_norm_threshold, velocity_ema_factor)
+            V_tar = apply_velocity_clamp(V_tar, xt_tar, velocity_norm_threshold)
+            V_tar = apply_velocity_ema(V_tar, prev_vt_tar, velocity_ema_factor)
             prev_vt_tar = V_tar
             xt_tar = xt_tar + dt_b * V_tar
 
@@ -196,7 +195,5 @@ def flowedit_sampling_loop(
     time_costs["diffusion_time_cost"] = elapsed
     time_costs["diffusion_per_step_time_cost"] = elapsed / active_steps
     time_costs["total_time_cost"] = elapsed
-    # Match 1.0's tail: if the post-window initialised a running variable
-    # we return that; otherwise ``zt_edit`` is the final state.
     target_latents = zt_edit if xt_tar is None else xt_tar
     return {"target_latents": target_latents, "time_costs": time_costs}

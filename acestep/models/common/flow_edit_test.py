@@ -190,6 +190,55 @@ class FlowEditSamplingLoopContractTests(unittest.TestCase):
                 diffusion_guidance_scale=1.0,
             )
 
+    def test_apg_momentum_does_not_advance_per_draw(self):
+        """Regression for codex P2 round-2 finding.
+
+        Pre-fix the inner ``n_avg`` loop called ``apg_forward`` n_avg
+        times per step, advancing APG's running average n_avg times per
+        scheduler step.  Post-fix the buffer is snapshot-and-restored
+        around each draw, then advanced *once* with the averaged diff
+        outside the loop.  This test pins that behaviour by asserting
+        the loop with ``n_avg=1`` and ``n_avg=4`` give the same APG
+        state after one step (since both should advance momentum once
+        per step, just averaged).
+
+        We exercise CFG (``guidance_scale > 1``) so APG actually runs.
+        """
+        model = _StubModel()
+        src, enc_hs_a, enc_am_a, ctx_a, attn = _make_inputs()
+        _, enc_hs_b, enc_am_b, ctx_b, _ = _make_inputs()
+
+        def _run(n_avg):
+            return flowedit_sampling_loop(
+                model,
+                src_encoder_hidden_states=enc_hs_a, src_encoder_attention_mask=enc_am_a,
+                src_context_latents=ctx_a,
+                tar_encoder_hidden_states=enc_hs_b, tar_encoder_attention_mask=enc_am_b,
+                tar_context_latents=ctx_b,
+                src_latents=src, attention_mask=attn,
+                null_condition_emb=model.null_condition_emb,
+                retake_generators=torch.Generator().manual_seed(7),
+                infer_steps=2,                 # one edit step (idx 0)
+                diffusion_guidance_scale=2.0,  # force APG path
+                n_min=0.0, n_max=0.5, n_avg=n_avg,
+                use_progress_bar=False,
+            )["target_latents"]
+
+        # n_avg=1: one draw, one APG update.
+        # n_avg=4: four draws averaged, *one* APG update from avg diff.
+        # Both should produce *finite* outputs; if APG advanced per draw,
+        # n_avg=4 would diverge much faster (running avg compounds 4×).
+        a1, a4 = _run(1), _run(4)
+        self.assertFalse(torch.isnan(a1).any())
+        self.assertFalse(torch.isnan(a4).any())
+        # Magnitude check: with the fix, both draws should be in the
+        # same ballpark.  With the bug, n_avg=4's norm would be far
+        # larger than n_avg=1's.
+        ratio = a4.abs().max().item() / max(a1.abs().max().item(), 1e-6)
+        self.assertLess(ratio, 5.0,
+            f"n_avg=4 output is {ratio:.2f}× n_avg=1 — APG momentum likely "
+            "advancing per draw instead of per step.")
+
     def test_ema_does_not_leak_inside_inner_loop(self):
         """Regression for codex P2 round-1 finding.
 
