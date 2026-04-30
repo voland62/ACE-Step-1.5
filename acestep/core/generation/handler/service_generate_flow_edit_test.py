@@ -97,6 +97,29 @@ class DispatchFlowEditTests(unittest.TestCase):
         self.assertEqual(kwargs["edit_n_max"], 1.0)
         self.assertEqual(kwargs["edit_n_avg"], 1)
 
+    def test_dict_metas_parsed_before_tokenization(self):
+        """Regression for codex P2 round-3 finding.
+
+        Pre-fix the dispatch passed raw metas (often dicts from
+        ``prepare_batch_data``) straight into
+        ``_prepare_text_conditioning_inputs``, so target prompts got a
+        ``{'bpm': 120}`` repr instead of the parsed ``- bpm: 120`` block
+        the source path produced.  Post-fix the dispatch calls
+        ``handler._parse_metas`` first, matching the source pipeline.
+        """
+        handler = FakeHandler()
+        edit_ctx = make_edit_ctx()
+        # Real handler hands us a list of dicts here.
+        edit_ctx["metas"] = [{"bpm": 120, "key": "C minor"}]
+        dispatch_flow_edit(
+            handler, payload=make_payload(), generate_kwargs={"infer_steps": 4},
+            seed_param=None, edit_ctx=edit_ctx,
+        )
+        self.assertTrue(any(
+            isinstance(m, str) and m.startswith("PARSED:")
+            for m in handler.captured_parsed_metas
+        ), f"target metas were not parsed: {handler.captured_parsed_metas}")
+
     def test_retake_seed_forwarded_from_generate_kwargs(self):
         """Regression for codex P2 round-2 finding.
 

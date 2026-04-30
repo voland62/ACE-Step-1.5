@@ -39,6 +39,8 @@ class FakeHandler:
     def _prepare_text_conditioning_inputs(self, *, batch_size, instructions,
                                           captions, lyrics, parsed_metas,
                                           vocal_languages, audio_cover_strength):
+        # Capture parsed_metas so tests can verify _parse_metas ran first.
+        self.captured_parsed_metas = parsed_metas
         seq = 4
         return (
             ["fake-text-input"] * batch_size,
@@ -48,6 +50,18 @@ class FakeHandler:
             torch.ones(batch_size, seq),
             None, None,
         )
+
+    def _parse_metas(self, metas):
+        """Stub mirroring the real handler's contract: dict -> formatted string."""
+        out = []
+        for m in metas:
+            if isinstance(m, dict):
+                # Real handler emits "- bpm: 120\n- key: ..." style; stub uses
+                # a sentinel prefix so tests can detect parse-vs-raw-dict.
+                out.append("PARSED:" + ",".join(f"{k}={v}" for k, v in m.items()))
+            else:
+                out.append(str(m))
+        return out
 
     def infer_text_embeddings(self, ids):
         return torch.zeros(ids.shape[0], ids.shape[1], 16)

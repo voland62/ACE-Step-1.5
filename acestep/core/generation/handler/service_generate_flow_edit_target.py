@@ -46,7 +46,15 @@ def tokenize_target(
     captions = [target_caption] * batch_size
     lyrics = [target_lyrics] * batch_size
     langs = _pad_to_batch(vocal_languages, "unknown", batch_size)
-    parsed_metas_list = _pad_to_batch(metas, "", batch_size)
+    # ``metas`` arrives here in whatever shape ``service_generate``'s
+    # ``_normalize_inputs`` left it — usually a list of dicts when the
+    # request flows through ``generate_music`` ->
+    # ``prepare_batch_data``.  The source path normalises with
+    # ``_parse_metas`` before tokenizing; if we skip it the target
+    # prompt gets a raw ``{'bpm': ...}`` repr instead of the proper
+    # ``- bpm: ...`` block, so conditioning silently drifts.
+    raw_metas = _pad_to_batch(metas, "", batch_size)
+    parsed_metas_list = handler._parse_metas(raw_metas)
     instr_list = _pad_to_batch(instructions, DEFAULT_DIT_INSTRUCTION, batch_size)
 
     (
