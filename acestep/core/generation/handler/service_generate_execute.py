@@ -145,8 +145,16 @@ class ServiceGenerateExecuteMixin:
         audio_cover_strength: float,
         retake_seed: Any = None,
         retake_variance: float = 0.0,
+        edit_ctx: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Dict[str, Any], torch.Tensor, torch.Tensor, torch.Tensor]:
         """Execute condition preparation and diffusion using MLX or PyTorch backend."""
+        if edit_ctx is not None and edit_ctx.get("task_type") == "edit":
+            from .service_generate_flow_edit import dispatch_flow_edit
+
+            return dispatch_flow_edit(
+                self, payload=payload, generate_kwargs=generate_kwargs,
+                seed_param=seed_param, edit_ctx=edit_ctx,
+            )
         dit_backend = (
             "MLX (native)" if (self.use_mlx_dit and self.mlx_decoder is not None) else f"PyTorch ({self.device})"
         )

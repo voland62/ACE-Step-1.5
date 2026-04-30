@@ -165,6 +165,16 @@ class GenerationParams:
     # retake_variance=0 is a no-op; the retake_seed is only consumed when variance>0.
     retake_seed: Optional[Union[str, int]] = None
     retake_variance: float = 0.0
+    # Flow-edit (issue #1156): morph the source toward a new prompt/lyrics by
+    # integrating V_delta = V_tar - V_src over [edit_n_min, edit_n_max].
+    # Activated only when ``task_type == "edit"``; supported on the four
+    # base DiT variants (xl_base / xl_sft / sft / base).  v1 disables
+    # DCW / heun / ADG inside the loop — see #1156 for the follow-up plan.
+    edit_target_caption: str = ""
+    edit_target_lyrics: str = ""
+    edit_n_min: float = 0.0
+    edit_n_max: float = 1.0
+    edit_n_avg: int = 1
     audio_cover_strength: float = 1.0
     cover_noise_strength: float = 0.0  # 0=pure noise (no cover), 1=closest to src audio
 
@@ -655,6 +665,11 @@ def generate_music(
             "repaint_strength": params.repaint_strength,
             "retake_seed": params.retake_seed,
             "retake_variance": params.retake_variance,
+            "edit_target_caption": params.edit_target_caption,
+            "edit_target_lyrics": params.edit_target_lyrics,
+            "edit_n_min": params.edit_n_min,
+            "edit_n_max": params.edit_n_max,
+            "edit_n_avg": params.edit_n_avg,
             "instruction": params.instruction,
             "audio_cover_strength": params.audio_cover_strength,
             "cover_noise_strength": params.cover_noise_strength,

@@ -71,11 +71,11 @@ VALID_TIME_SIGNATURES = [2, 3, 4, 6]
 # ==============================================================================
 
 # All supported generation tasks across different model variants
-TASK_TYPES = ["text2music", "repaint", "cover", "cover-nofsq", "extract", "lego", "complete"]
+TASK_TYPES = ["text2music", "repaint", "cover", "cover-nofsq", "extract", "lego", "complete", "edit"]
 
 # Task types available for turbo models (optimized subset for speed)
 # - text2music: Generate from text descriptions
-# - repaint: Selective audio editing/regeneration  
+# - repaint: Selective audio editing/regeneration
 # - cover: Style transfer using reference audio
 TASK_TYPES_TURBO = ["text2music", "repaint", "cover", "cover-nofsq"]
 
@@ -84,7 +84,9 @@ TASK_TYPES_TURBO = ["text2music", "repaint", "cover", "cover-nofsq"]
 # - extract: Separate individual tracks/stems from audio
 # - lego: Multi-track generation (add layers)
 # - complete: Automatic completion of partial audio
-TASK_TYPES_BASE = ["text2music", "repaint", "cover", "cover-nofsq", "extract", "lego", "complete"]
+# - edit: Flow-edit — morph the source toward a new prompt/lyrics
+#   (paired CFG, ~4× decoder forwards/step; only on base variants)
+TASK_TYPES_BASE = ["text2music", "repaint", "cover", "cover-nofsq", "extract", "lego", "complete", "edit"]
 
 
 # ==============================================================================
@@ -134,6 +136,7 @@ TASK_INSTRUCTIONS = {
     "lego_default": "Generate the track based on the audio context:",
     "complete": "Complete the input track with {TRACK_CLASSES}:",
     "complete_default": "Complete the input track:",
+    "edit": "Edit the audio toward the target conditions:",
 }
 
 

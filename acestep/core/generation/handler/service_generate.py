@@ -58,52 +58,21 @@ class ServiceGenerateMixin:
         task_type: str = "",
         retake_seed: Optional[Union[int, List[int]]] = None,
         retake_variance: float = 0.0,
+        edit_target_caption: str = "",
+        edit_target_lyrics: str = "",
+        edit_n_min: float = 0.0,
+        edit_n_max: float = 1.0,
+        edit_n_avg: int = 1,
     ) -> Dict[str, Any]:
         """Generate music latents and metadata from text/audio conditioning inputs.
 
-        Args:
-            captions: Caption string(s) describing the target generation.
-            lyrics: Lyric string(s) aligned with each requested sample.
-            keys: Optional sample identifiers.
-            target_wavs: Optional target audio tensor for repaint/cover flows.
-            refer_audios: Optional nested reference-audio tensors for style conditioning.
-            metas: Optional metadata payload(s) for each sample.
-            vocal_languages: Optional per-sample vocal language code(s).
-            infer_steps: Number of diffusion steps to run.
-            guidance_scale: CFG guidance strength.
-            seed: Optional scalar or per-sample seed list.
-            return_intermediate: Whether to include intermediate tensors in outputs.
-            repainting_start: Optional repaint start time(s) in seconds.
-            repainting_end: Optional repaint end time(s) in seconds.
-            instructions: Optional per-sample instruction string(s).
-            audio_cover_strength: Cover blend strength.
-            cover_noise_strength: Cover noise blend strength.
-            use_adg: Whether adaptive diffusion guidance is enabled.
-            cfg_interval_start: CFG schedule start ratio.
-            cfg_interval_end: CFG schedule end ratio.
-            shift: Diffusion shift parameter.
-            audio_code_hints: Optional serialized audio-code hints.
-            infer_method: Diffusion inference method selector.
-            timesteps: Optional explicit diffusion timestep sequence.
-            repaint_crossfade_frames: Crossfade width (latent frames) at repaint
-                boundaries for boundary blending.  ~0.4s at 25 Hz.
-            sampler_mode: Sampler algorithm — ``"euler"`` or ``"heun"``.
-            velocity_norm_threshold: Velocity norm clamping threshold (0 = disabled).
-            velocity_ema_factor: Velocity EMA smoothing factor (0 = disabled).
-            dcw_enabled: Enable Differential Correction in Wavelet domain
-                (CVPR 2026, arXiv:2604.16044).  Opt-in sampler-side correction
-                for SNR-t bias.  Default ``False``.
-            dcw_mode: DCW correction mode — ``"low"``, ``"high"``, ``"double"``
-                or ``"pix"``.  Default ``"low"``.
-            dcw_scaler: DCW correction strength for the low band (or the
-                single band in ``"high"``/``"pix"`` modes).  Modulated by
-                ``t_curr`` inside the sampler.
-            dcw_high_scaler: DCW correction strength for the high band in
-                ``"double"`` mode.
-            dcw_wavelet: PyWavelets basis — e.g. ``"haar"``, ``"db4"``,
-                ``"sym8"``.
-            task_type: Generation task selector used when preparing
-                conditioning masks.
+        See :class:`ServiceGenerateRequestMixin` and the per-handler call sites for
+        the contract on each input.  Notable groups:
+        ``captions``/``lyrics``/``metas``/``vocal_languages`` are per-sample
+        conditioning; ``cfg_interval_*`` / ``sampler_mode`` /
+        ``velocity_*`` / ``dcw_*`` are sampler tweaks; ``task_type`` selects
+        the generation branch (``"edit"`` activates the flow-edit dispatch
+        via ``edit_ctx`` in :func:`_execute_service_generate_diffusion`).
 
         Returns:
             Dict[str, Any]: Service output payload containing generated latents,
@@ -174,16 +143,18 @@ class ServiceGenerateMixin:
             retake_seed=retake_seed,
             retake_variance=retake_variance,
         )
+        # edit_ctx activates the flow-edit branch when task_type=="edit".
+        edit_ctx = {
+            "task_type": task_type, "edit_target_caption": edit_target_caption,
+            "edit_target_lyrics": edit_target_lyrics, "vocal_languages": normalized.get("vocal_languages"),
+            "metas": normalized.get("metas"), "instructions": normalized.get("instructions"),
+            "edit_n_min": edit_n_min, "edit_n_max": edit_n_max, "edit_n_avg": edit_n_avg,
+        }
         outputs, encoder_hidden_states, encoder_attention_mask, context_latents = (
             self._execute_service_generate_diffusion(
-                payload=payload,
-                generate_kwargs=generate_kwargs,
-                seed_param=seed_param,
-                infer_method=infer_method,
-                shift=shift,
-                audio_cover_strength=audio_cover_strength,
-                retake_seed=retake_seed,
-                retake_variance=retake_variance,
+                payload=payload, generate_kwargs=generate_kwargs, seed_param=seed_param,
+                infer_method=infer_method, shift=shift, audio_cover_strength=audio_cover_strength,
+                retake_seed=retake_seed, retake_variance=retake_variance, edit_ctx=edit_ctx,
             )
         )
         return self._attach_service_generate_outputs(
