@@ -147,7 +147,12 @@ def flowedit_sampling_loop(
 
         if step_idx < n_max_step:
             # Edit window: integrate V_delta = V_tar - V_src over n_avg draws.
-            V_delta_avg = torch.zeros_like(zt_edit)
+            # ``prev_vt_*`` must stay frozen at the *previous step*'s value
+            # for the entire inner loop — otherwise later draws would EMA
+            # against earlier draws of the same step, biasing the Monte
+            # Carlo average and making the result depend on draw order.
+            V_src_sum = torch.zeros_like(zt_edit)
+            V_tar_sum = torch.zeros_like(zt_edit)
             for _ in range(n_avg):
                 fwd_noise = draw_fwd_noise(src_latents.shape, retake_generators, device, dtype)
                 zt_src = (1.0 - t_curr_f) * src_latents + t_curr_f * fwd_noise
@@ -162,9 +167,13 @@ def flowedit_sampling_loop(
                                             velocity_norm_threshold, velocity_ema_factor)
                 V_tar = apply_velocity_post(V_tar, zt_tar, prev_vt_tar,
                                             velocity_norm_threshold, velocity_ema_factor)
-                prev_vt_src, prev_vt_tar = V_src, V_tar
-                V_delta_avg = V_delta_avg + (V_tar - V_src) / n_avg
-            zt_edit = zt_edit + dt_b * V_delta_avg
+                V_src_sum = V_src_sum + V_src
+                V_tar_sum = V_tar_sum + V_tar
+            V_src_avg = V_src_sum / n_avg
+            V_tar_avg = V_tar_sum / n_avg
+            # Update EMA carry-over once the step's effective velocity is known.
+            prev_vt_src, prev_vt_tar = V_src_avg, V_tar_avg
+            zt_edit = zt_edit + dt_b * (V_tar_avg - V_src_avg)
         else:
             # Past the edit window: regular Euler with target cond on the
             # affine-shifted running variable.  Initialised once at the

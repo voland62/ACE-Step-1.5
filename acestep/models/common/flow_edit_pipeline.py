@@ -109,6 +109,10 @@ def flowedit_generate_audio(
     edit_n_min: float = 0.0,
     edit_n_max: float = 1.0,
     edit_n_avg: int = 1,
+    # Conditioning hints (forwarded to both prepare_condition calls — they
+    # describe the *source audio*, which is shared across src and tar).
+    precomputed_lm_hints_25Hz: Optional[torch.Tensor] = None,
+    audio_codes: Optional[torch.Tensor] = None,
     # Accepted-but-disabled v1 sampler tricks (logged + bypassed)
     sampler_mode: str = "euler",
     use_adg: bool = False,
@@ -142,6 +146,8 @@ def flowedit_generate_audio(
         src_latents=src_latents,
         chunk_masks=chunk_masks,
         is_covers=is_covers,
+        precomputed_lm_hints_25Hz=precomputed_lm_hints_25Hz,
+        audio_codes=audio_codes,
     )
     tar_enc_hs, tar_enc_am, tar_ctx = model.prepare_condition(
         text_hidden_states=target_text_hidden_states,
@@ -156,6 +162,8 @@ def flowedit_generate_audio(
         src_latents=src_latents,
         chunk_masks=chunk_masks,
         is_covers=is_covers,
+        precomputed_lm_hints_25Hz=precomputed_lm_hints_25Hz,
+        audio_codes=audio_codes,
     )
 
     # Forward-noise generators: prefer retake_seed (independent draws), else

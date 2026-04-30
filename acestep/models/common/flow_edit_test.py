@@ -190,6 +190,108 @@ class FlowEditSamplingLoopContractTests(unittest.TestCase):
                 diffusion_guidance_scale=1.0,
             )
 
+    def test_ema_does_not_leak_inside_inner_loop(self):
+        """Regression for codex P2 round-1 finding.
+
+        Pre-fix the loop updated ``prev_vt_*`` after every n_avg draw, so
+        later draws got EMA-smoothed against earlier draws of the same
+        step.  Post-fix the EMA carry-over is updated *once* per step
+        from the averaged velocity, so n_avg results stay independent of
+        draw order.  This test exercises the path with non-zero EMA and
+        n_avg=4 and pins reproducibility.
+        """
+        model = _StubModel()
+        src, enc_hs_a, enc_am_a, ctx_a, attn = _make_inputs()
+        _, enc_hs_b, enc_am_b, ctx_b, _ = _make_inputs()
+
+        def _run():
+            return flowedit_sampling_loop(
+                model,
+                src_encoder_hidden_states=enc_hs_a, src_encoder_attention_mask=enc_am_a,
+                src_context_latents=ctx_a,
+                tar_encoder_hidden_states=enc_hs_b, tar_encoder_attention_mask=enc_am_b,
+                tar_context_latents=ctx_b,
+                src_latents=src, attention_mask=attn,
+                null_condition_emb=model.null_condition_emb,
+                retake_generators=torch.Generator().manual_seed(99),
+                infer_steps=4,
+                diffusion_guidance_scale=1.0,
+                velocity_ema_factor=0.3,
+                n_min=0.0, n_max=1.0, n_avg=4,
+                use_progress_bar=False,
+            )["target_latents"]
+
+        # Two runs with identical seeds must match bit-for-bit; this would
+        # have been flaky if prev_vt mutated mid-loop.
+        self.assertTrue(torch.equal(_run(), _run()))
+
+
+class _CapturingModel(_StubModel):
+    """Stub model whose ``prepare_condition`` records the kwargs it saw."""
+
+    def __init__(self, channels=16):
+        super().__init__(channels=channels)
+        self.captured_calls = []
+
+    def prepare_condition(self, **kwargs):
+        self.captured_calls.append(kwargs)
+        bsz = kwargs["src_latents"].shape[0]
+        seq = kwargs["src_latents"].shape[1]
+        # Match the real method's return signature (enc_hs, enc_am, ctx).
+        return (
+            torch.randn(bsz, 4, self.channels),
+            torch.ones(bsz, 4),
+            torch.randn(bsz, seq, self.channels * 2),
+        )
+
+
+class FlowEditPipelineConditionForwardingTests(unittest.TestCase):
+
+    def test_lm_hints_and_audio_codes_forwarded_to_both_calls(self):
+        """Regression for codex P2 round-1 finding: hints must reach prepare_condition."""
+        from acestep.models.common.flow_edit_pipeline import flowedit_generate_audio
+
+        model = _CapturingModel()
+        bsz, seq, ch = 1, 8, model.channels
+        src = torch.randn(bsz, seq, ch)
+        text_hs = torch.randn(bsz, 4, ch)
+        text_am = torch.ones(bsz, 4)
+        lyric_hs = torch.randn(bsz, 4, ch)
+        lyric_am = torch.ones(bsz, 4)
+        refer = torch.zeros(0, 4, ch)
+        refer_om = torch.zeros(0, dtype=torch.long)
+        chunk_masks = torch.ones(bsz, seq, ch)
+        is_covers = torch.zeros(bsz, dtype=torch.long)
+        silence = torch.zeros(bsz, seq, ch)
+
+        sentinel_hints = torch.full((bsz, seq, ch), 0.42)
+        sentinel_codes = torch.tensor([[1, 2, 3]])
+
+        flowedit_generate_audio(
+            model,
+            text_hidden_states=text_hs, text_attention_mask=text_am,
+            lyric_hidden_states=lyric_hs, lyric_attention_mask=lyric_am,
+            refer_audio_acoustic_hidden_states_packed=refer,
+            refer_audio_order_mask=refer_om,
+            src_latents=src, chunk_masks=chunk_masks,
+            is_covers=is_covers, silence_latent=silence,
+            target_text_hidden_states=text_hs,
+            target_text_attention_mask=text_am,
+            target_lyric_hidden_states=lyric_hs,
+            target_lyric_attention_mask=lyric_am,
+            infer_steps=2,
+            diffusion_guidance_scale=1.0,
+            edit_n_min=0.0, edit_n_max=1.0, edit_n_avg=1,
+            use_progress_bar=False,
+            precomputed_lm_hints_25Hz=sentinel_hints,
+            audio_codes=sentinel_codes,
+        )
+
+        self.assertEqual(len(model.captured_calls), 2)  # one for src, one for tar
+        for call in model.captured_calls:
+            self.assertIs(call["precomputed_lm_hints_25Hz"], sentinel_hints)
+            self.assertIs(call["audio_codes"], sentinel_codes)
+
 
 if __name__ == "__main__":
     unittest.main()
