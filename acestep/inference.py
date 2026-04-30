@@ -439,7 +439,11 @@ def generate_music(
         # and don't need LM to generate audio codes or metadata.
         # For extract tasks, LLM-generated captions can conflict with the extract instruction
         # and cause the DiT model to reconstruct input audio instead of extracting stems.
-        skip_lm_tasks = {"cover", "cover-nofsq", "repaint", "extract"}
+        # Flow-edit (#1156) needs the user's source audio verbatim; running
+        # LM Phase 1 would replace ``audio_code_string_to_use`` and the
+        # handler would feed the LM-generated codes as source instead of
+        # ``src_audio``.  Add ``edit`` here to keep the source path clean.
+        skip_lm_tasks = {"cover", "cover-nofsq", "repaint", "extract", "edit"}
         
         # Determine if we should use LLM
         # LLM is needed for:
