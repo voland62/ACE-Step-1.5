@@ -35,7 +35,7 @@ def build_variation_morph_controls() -> dict[str, Any]:
     with gr.Group() as variation_group:
         with gr.Row(equal_height=False):
             # ---- LEFT column: Retake ----
-            with gr.Column(scale=1, min_width=200):
+            with gr.Column(scale=1, min_width=200) as flow_edit_column:
                 with gr.Row():
                     retake_enabled = gr.Checkbox(
                         label="Retake", value=False, scale=8,
@@ -116,6 +116,7 @@ def build_variation_morph_controls() -> dict[str, Any]:
         "retake_seed": retake_seed,
         "retake_think_warning": retake_think_warning,
         "flow_edit_morph": flow_edit_morph,
+        "flow_edit_column": flow_edit_column,
         "morph_panel": morph_panel,
         "flow_edit_copy_from_current_btn": flow_edit_copy_from_current_btn,
         "flow_edit_source_caption": flow_edit_source_caption,

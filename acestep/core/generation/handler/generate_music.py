@@ -223,6 +223,7 @@ class GenerateMusicMixin:
         repaint_wav_crossfade_sec: float = 0.0,
         repaint_mode: str = "balanced",
         repaint_strength: float = 0.5,
+        source_repaint_latents: Optional[torch.Tensor] = None,
         retake_seed: Optional[Union[str, float, int]] = None,
         retake_variance: float = 0.0,
         flow_edit_morph: bool = False,
@@ -258,6 +259,8 @@ class GenerateMusicMixin:
             use_tiled_decode: Whether tiled VAE decode is used.
             latent_shift: Additive latent post-processing value.
             latent_rescale: Multiplicative latent post-processing value.
+            source_repaint_latents: Optional cached source latents used for
+                generated-source repaint instead of repaint-time VAE encoding.
             progress: Optional callback taking ``(ratio, desc=...)``.
 
         Returns:
@@ -340,7 +343,7 @@ class GenerateMusicMixin:
                 audio_duration = processed_src_audio.shape[-1] / self.sample_rate
 
             # Flow-edit overlay v1: text2music (silence-context) and
-            # cover / cover-nofsq (shared LM-codes context).  Repaint /
+            # cover / cover-nofsq (shared LM-codes context). Repaint /
             # extract / lego need paired-CFG derivation per task shape
             # and are left for follow-up.
             if flow_edit_morph and task_type not in ("text2music", "cover", "cover-nofsq"):
@@ -407,6 +410,7 @@ class GenerateMusicMixin:
                 dcw_wavelet=dcw_wavelet,
                 repaint_crossfade_frames=resolved_cf_frames,
                 repaint_injection_ratio=injection_ratio,
+                source_repaint_latents=source_repaint_latents,
                 task_type=task_type,
                 actual_retake_seed_list=actual_retake_seed_list,
                 retake_variance=retake_variance,

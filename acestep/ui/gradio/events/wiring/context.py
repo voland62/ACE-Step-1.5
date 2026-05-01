@@ -82,6 +82,8 @@ _MODE_UI_OUTPUT_KEYS = (
     "duration_auto",
     "text2music_audio_code_string",
     "src_audio",
+    "flow_edit_column",
+    "flow_edit_morph",
 )
 
 

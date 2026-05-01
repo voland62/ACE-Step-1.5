@@ -36,6 +36,7 @@ class ConditioningBatchMixin:
         cover_noise_strength: float = 0.0,
         chunk_mask_modes: Optional[List[str]] = None,
         task_type: str = "",
+        source_repaint_latents: Optional[torch.Tensor] = None,
     ) -> Dict[str, Any]:
         """Prepare model-ready conditioning batch tensors and metadata.
 
@@ -77,7 +78,12 @@ class ConditioningBatchMixin:
         parsed_metas = self._parse_metas(metas)
 
         target_wavs, target_latents, latent_masks, max_latent_length, silence_latent_tiled = (
-            self._prepare_target_latents_and_wavs(batch_size, target_wavs, audio_code_hints)
+            self._prepare_target_latents_and_wavs(
+                batch_size,
+                target_wavs,
+                audio_code_hints,
+                source_repaint_latents=source_repaint_latents,
+            )
         )
         wav_lengths = torch.tensor([target_wavs.shape[-1]] * batch_size, dtype=torch.long)
 

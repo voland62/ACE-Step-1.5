@@ -205,6 +205,30 @@ class GenerateMusicMixinTests(unittest.TestCase):
         self.assertEqual(out["error"], "boom")
         self.assertIn("Error: boom", out["status_message"])
 
+    def test_repaint_forwards_cached_source_latents_to_service(self):
+        """Generated-source repaint should only override the source-latent input."""
+        host = _Host()
+        source_latents = torch.ones(4, 3)
+
+        out = host.generate_music(
+            captions="cap",
+            lyrics="lyr",
+            task_type="repaint",
+            repainting_start=1.0,
+            repainting_end=2.0,
+            source_repaint_latents=source_latents,
+        )
+
+        self.assertEqual(out, host._final_payload)
+        self.assertEqual(
+            "repaint",
+            host.calls["_run_generate_music_service_with_progress"]["task_type"],
+        )
+        self.assertIs(
+            source_latents,
+            host.calls["_run_generate_music_service_with_progress"]["source_repaint_latents"],
+        )
+
 
 class VramPreflightCheckTests(unittest.TestCase):
     """Verify ``_vram_preflight_check`` respects CPU offload mode."""

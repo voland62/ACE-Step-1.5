@@ -10,6 +10,7 @@ import json
 import time as time_module
 
 import gradio as gr
+import numpy as np
 import torch
 from loguru import logger
 
@@ -295,6 +296,12 @@ def generate_with_progress(
         if saved_path:
             audio_path = saved_path.replace("\\", "/")
 
+        _persist_repaint_source_latents(
+            source_latents=_extract_repaint_source_latents(result.extra_outputs, i),
+            json_path=json_path,
+            audio_params=audio_params,
+        )
+
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(audio_params, f, indent=2, ensure_ascii=False)
 
@@ -438,6 +445,35 @@ def _extract_sample_tensor(extra_outputs, sample_idx):
     except Exception as e:
         print(f"[Auto Score] Failed to prepare tensor data for sample {sample_idx}: {e}")
         return None
+
+
+def _extract_repaint_source_latents(extra_outputs, sample_idx):
+    """Return final generated latents for repaint-source reuse."""
+    try:
+        pred_latents = extra_outputs.get("pred_latents")
+        if pred_latents is None or sample_idx >= pred_latents.shape[0]:
+            return None
+        return pred_latents[sample_idx]
+    except (AttributeError, IndexError, TypeError):
+        return None
+
+
+def _persist_repaint_source_latents(source_latents, json_path: str, audio_params: dict) -> None:
+    """Persist repaint-ready source latents beside a generated audio sidecar.
+
+    The cached tensor is the final generated latent returned by the DiT path.
+    This avoids a lossy decode-to-audio then VAE-reencode cycle for generated
+    sources while uploaded audio keeps the normal repaint path.
+    """
+    if source_latents is None:
+        return
+    latent_path = os.path.splitext(json_path)[0] + ".repaint_latents.npy"
+    try:
+        np.save(latent_path, source_latents.detach().cpu().float().numpy())
+    except (AttributeError, OSError, RuntimeError, ValueError) as exc:
+        logger.warning("[repaint_cache] Could not persist repaint source latents: {}", exc)
+        return
+    audio_params["repaint_source_latents_file"] = os.path.basename(latent_path)
 
 
 def _run_auto_lrc(dit_handler, extra_outputs, sample_idx,

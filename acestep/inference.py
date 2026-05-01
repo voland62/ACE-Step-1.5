@@ -6,13 +6,17 @@ designed for third-party integration. It offers both a simplified API and
 backward-compatible Gradio UI support.
 """
 
-import math
+import glob
 import inspect
+import json
+import math
 import os
+import random
 import tempfile
 from typing import Optional, Union, List, Dict, Any, Tuple
 from dataclasses import dataclass, field, asdict
 from loguru import logger
+import numpy as np
 import torch
 
 
@@ -251,6 +255,15 @@ class GenerationConfig:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class CachedRepaintSource:
+    """Generated-source repaint cache loaded from an audio sidecar."""
+
+    latents: torch.Tensor
+    source_seed: Optional[int]
+    latent_path: str
+
+
 @dataclass
 class GenerationResult:
     """Result of music generation.
@@ -363,6 +376,126 @@ def _update_metadata_from_lm(
     return bpm, key_scale, time_signature, audio_duration, vocal_language, caption, lyrics
 
 
+def _candidate_repaint_sidecars(src_audio: str) -> List[str]:
+    """Return possible generated sidecar paths for a repaint source audio path."""
+    expanded_audio = os.path.expanduser(src_audio)
+    candidates = [os.path.splitext(expanded_audio)[0] + ".json"]
+    basename = os.path.splitext(os.path.basename(expanded_audio))[0]
+    if basename:
+        results_root = os.path.join(os.getcwd(), "gradio_outputs")
+        candidates.extend(glob.glob(os.path.join(results_root, "batch_*", f"{basename}.json")))
+    seen = set()
+    unique_candidates = []
+    for candidate in candidates:
+        normalized = os.path.abspath(candidate)
+        if normalized not in seen:
+            seen.add(normalized)
+            unique_candidates.append(normalized)
+    return unique_candidates
+
+
+def _coerce_seed_value(value: Any) -> Optional[int]:
+    """Convert a sidecar seed value to an integer when possible."""
+    if value is None:
+        return None
+    if isinstance(value, list):
+        value = value[0] if value else None
+    if value is None:
+        return None
+    try:
+        text = str(value).split(",")[0].strip()
+        if not text:
+            return None
+        seed = int(float(text))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return seed if seed >= 0 else None
+
+
+def _resample_matching_source_seeds(
+    seeds: List[int],
+    source_seed: Optional[int],
+) -> List[int]:
+    """Return seeds that do not reuse the cached source generation seed."""
+    if source_seed is None:
+        return seeds
+    resolved = list(seeds)
+    for index, seed in enumerate(resolved):
+        if seed != source_seed:
+            continue
+        replacement = random.randint(0, 2**32 - 1)
+        while replacement == source_seed:
+            replacement = random.randint(0, 2**32 - 1)
+        logger.info(
+            "[repaint_cache] Replacing repaint seed {} with {} to avoid reusing source seed",
+            source_seed,
+            replacement,
+        )
+        resolved[index] = replacement
+    return resolved
+
+
+def _load_cached_repaint_source(src_audio: Optional[str]) -> Optional[CachedRepaintSource]:
+    """Load cached repaint source state from a generated audio sidecar.
+
+    The cache is an optimization for ACE-generated Gradio outputs. Missing or
+    malformed sidecars return ``None`` so uploaded audio keeps the normal
+    repaint path.
+    """
+    if not src_audio:
+        return None
+    try:
+        audio_path = os.fspath(src_audio)
+    except TypeError:
+        return None
+    sidecars = _candidate_repaint_sidecars(audio_path)
+    json_path = next((path for path in sidecars if os.path.exists(path)), None)
+    if json_path is None:
+        logger.info(
+            "[repaint_cache] No cached source latents found for src_audio={} candidates={}",
+            audio_path,
+            sidecars,
+        )
+        return None
+    try:
+        with open(json_path, encoding="utf-8") as file_obj:
+            params = json.load(file_obj)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(params, dict):
+        return None
+    latent_file = str(params.get("repaint_source_latents_file") or "").strip()
+    if not latent_file:
+        return None
+    latent_path = latent_file
+    if not os.path.isabs(latent_path):
+        latent_path = os.path.join(os.path.dirname(json_path), latent_file)
+    latent_path = os.path.expanduser(latent_path)
+    if not os.path.exists(latent_path):
+        logger.warning("[repaint_cache] Cached repaint latents missing: {}", latent_path)
+        return None
+    try:
+        latents = np.load(latent_path).astype(np.float32)
+    except (OSError, ValueError) as exc:
+        logger.warning("[repaint_cache] Could not load cached repaint latents: {}", exc)
+        return None
+    if latents.ndim != 2:
+        logger.warning("[repaint_cache] Cached repaint latents must be shaped [T, C]")
+        return None
+    logger.info("[repaint_cache] Loaded cached repaint source latents from {}", latent_path)
+    return CachedRepaintSource(
+        latents=torch.from_numpy(latents),
+        source_seed=_coerce_seed_value(params.get("seed")),
+        latent_path=latent_path,
+    )
+
+
+def _load_cached_repaint_source_latents(src_audio: Optional[str]) -> Optional[torch.Tensor]:
+    """Load cached repaint source latents from a generated audio sidecar."""
+    cached_source = _load_cached_repaint_source(src_audio)
+    return cached_source.latents if cached_source is not None else None
+
+
 @_get_spaces_gpu_decorator(duration=180)
 def generate_music(
     dit_handler,
@@ -414,6 +547,14 @@ def generate_music(
         dit_input_caption = params.caption
         dit_input_vocal_language = params.vocal_language
         dit_input_lyrics = params.lyrics
+        cached_repaint_source = (
+            _load_cached_repaint_source(params.src_audio)
+            if params.task_type == "repaint"
+            else None
+        )
+        source_repaint_latents = (
+            cached_repaint_source.latents if cached_repaint_source is not None else None
+        )
         # Determine if we need to generate audio codes
         # If user has provided audio_codes, we don't need to generate them
         # Otherwise, check if we need audio codes (lm_dit mode) or just metas (dit mode)
@@ -451,6 +592,14 @@ def generate_music(
         # Use dit_handler.prepare_seeds to handle seed list generation and padding
         # This will handle all the logic: padding with random seeds if needed, etc.
         actual_seed_list, _ = dit_handler.prepare_seeds(actual_batch_size, seed_for_generation, config.use_random_seed)
+        use_random_seed_for_dit = config.use_random_seed
+        if cached_repaint_source is not None:
+            actual_seed_list = _resample_matching_source_seeds(
+                actual_seed_list,
+                cached_repaint_source.source_seed,
+            )
+            seed_for_generation = ",".join(str(seed) for seed in actual_seed_list)
+            use_random_seed_for_dit = False
 
         # LM-based Chain-of-Thought reasoning
         # Skip LM for cover/repaint/extract tasks - these tasks use reference/src audio directly
@@ -679,7 +828,7 @@ def generate_music(
             "vocal_language": dit_input_vocal_language,
             "inference_steps": params.inference_steps,
             "guidance_scale": params.guidance_scale,
-            "use_random_seed": config.use_random_seed,
+            "use_random_seed": use_random_seed_for_dit,
             "seed": seed_for_generation,  # Use config.seed (or params.seed fallback) instead of params.seed directly
             "reference_audio": params.reference_audio,
             "audio_duration": audio_duration,
@@ -700,6 +849,7 @@ def generate_music(
             "repaint_wav_crossfade_sec": params.repaint_wav_crossfade_sec,
             "repaint_mode": params.repaint_mode,
             "repaint_strength": params.repaint_strength,
+            "source_repaint_latents": source_repaint_latents,
             "retake_seed": params.retake_seed,
             "retake_variance": params.retake_variance,
             "flow_edit_morph": params.flow_edit_morph,

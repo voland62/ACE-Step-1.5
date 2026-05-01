@@ -79,6 +79,8 @@ def register_results_aux_handlers(
                 generation_section["captions"],
                 generation_section["flow_edit_source_caption"],
                 generation_section["flow_edit_source_lyrics"],
+                generation_section["random_seed_checkbox"],
+                generation_section["seed"],
             ]
             + list(mode_ui_outputs),
         )

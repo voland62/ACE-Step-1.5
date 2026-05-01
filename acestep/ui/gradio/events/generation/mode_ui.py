@@ -136,6 +136,14 @@ def compute_mode_ui_updates(mode: str, llm_handler=None, previous_mode: str = "C
     else:
         src_audio_update = gr.update(value=None)
 
+    flow_edit_supported = is_custom or is_cover
+    flow_edit_column_update = gr.update(visible=flow_edit_supported)
+    flow_edit_morph_update = (
+        gr.update(visible=True, interactive=True)
+        if flow_edit_supported
+        else gr.update(visible=False, value=False)
+    )
+
     return (
         gr.update(visible=show_simple),                    # 0: simple_mode_group
         gr.update(visible=show_custom_group),              # 1: custom_mode_group
@@ -186,6 +194,8 @@ def compute_mode_ui_updates(mode: str, llm_handler=None, previous_mode: str = "C
         auto_duration_update,                              # 41: duration_auto
         audio_codes_update,                                # 42: text2music_audio_code_string
         src_audio_update,                                  # 43: src_audio
+        flow_edit_column_update,                           # 44: flow_edit_column
+        flow_edit_morph_update,                            # 45: flow_edit_morph
     )
 
 
