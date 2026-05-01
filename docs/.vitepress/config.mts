@@ -155,7 +155,6 @@ function sidebarEN() {
           { text: 'Gradio UI Guide', link: '/en/GRADIO_GUIDE' },
           { text: 'UI Support Baseline', link: '/en/UI_SUPPORT' },
           { text: 'CLI', link: '/en/CLI' },
-          { text: 'Studio', link: '/en/studio' },
           { text: "Musician's Guide", link: '/en/ace_step_musicians_guide' },
         ],
       },

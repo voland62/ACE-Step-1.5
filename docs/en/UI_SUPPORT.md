@@ -15,16 +15,15 @@ multiple overlapping frontends alive.
 | OpenRouter-compatible API server | `acestep-openrouter`, `openrouter/openrouter_api_server.py` | Supported API-only surface | OpenAI/OpenRouter-compatible integration path. Not a UI. |
 | Generation CLI | `cli.py`, `acestep` console script | Supported command-line workflow | Useful for scripting, configuration, and non-browser generation. Not a replacement for the web UI. |
 | Side-Step training CLI/wizard | `train.py`, `acestep/training_v2/ui` | Supported or separately scoped training workflow | Rich terminal workflow for training. Do not remove until Gradio training parity and Side-Step ownership are explicitly reviewed. |
-| Static Studio HTML UI | `ui/studio.html` | Experimental; removal candidate | Frontend-only prototype that calls REST endpoints directly. It duplicates UI surface area and should be removed or formally deprecated before new UI work. |
+| Static Studio HTML UI | `ui/studio.html` | Removed | The experimental frontend-only prototype was removed to avoid duplicating product UI surface area before new UI work. |
 | Streamlit UI | `acestep/ui/streamlit` | Experimental; removal candidate | Independent prototype with its own model cache, navigation, settings, project storage, and docs. It duplicates product UI responsibilities. |
 
 ## Near-Term Cleanup Plan
 
 1. Keep Gradio as the supported product UI while the next UI is designed.
 2. Keep API servers as integration surfaces, not as UI cleanup targets.
-3. Remove the static Studio HTML UI in a focused PR.
-4. Remove the Streamlit UI in a separate focused PR.
-5. Defer any CLI or Side-Step training wizard decisions until feature parity is reviewed.
+3. Remove the Streamlit UI in a separate focused PR.
+4. Defer any CLI or Side-Step training wizard decisions until feature parity is reviewed.
 
 ## Gradio Feature Coverage Matrix
 
@@ -72,4 +71,3 @@ friendlier defaults and progressive disclosure.
 - Training should remain available, but separated from first-run generation.
 - API services should remain framework-neutral so future UI experiments do not duplicate model
   loading, generation, dataset, or training logic.
-
