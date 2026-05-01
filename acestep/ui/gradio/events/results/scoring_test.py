@@ -14,7 +14,7 @@ class CalculateScoreHandlerTests(unittest.TestCase):
 
     def test_low_vram_skips_pmi_and_uses_alignment(self):
         """Low free VRAM should not OOM the optional PMI path."""
-        llm_handler = self._llm_handler("acestep-5Hz-lm-4B")
+        llm_handler = self._llm_handler("acestep-5Hz-lm-4B", restorable=False)
         dit_handler = MagicMock()
         dit_handler.get_lyric_score.return_value = {
             "success": True,
@@ -53,7 +53,7 @@ class CalculateScoreHandlerTests(unittest.TestCase):
 
     def test_low_vram_without_alignment_returns_skip_message(self):
         """When no fallback exists, the user should see a low-VRAM PMI message."""
-        llm_handler = self._llm_handler("acestep-5Hz-lm-4B")
+        llm_handler = self._llm_handler("acestep-5Hz-lm-4B", restorable=False)
 
         with (
             patch("torch.cuda.is_available", return_value=True),
@@ -114,6 +114,38 @@ class CalculateScoreHandlerTests(unittest.TestCase):
         pmi_mock.assert_called_once()
         self.assertIn("Global Quality Score", result)
 
+    def test_restorable_vllm_runs_pmi_even_when_current_free_vram_is_low(self):
+        """Restorable vLLM can be unloaded for PMI instead of skipping."""
+        llm_handler = self._llm_handler("acestep-5Hz-lm-4B", restorable=True)
+
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.mem_get_info", return_value=(1 * 1024**3, 80 * 1024**3)),
+            patch(
+                "acestep.core.scoring.lm_score.calculate_pmi_score_per_condition",
+                return_value=({"caption": 0.8}, 0.8, "ok"),
+            ) as pmi_mock,
+        ):
+            result = calculate_score_handler(
+                llm_handler=llm_handler,
+                audio_codes_str="<|audio_code_1|>",
+                caption="caption",
+                lyrics="",
+                lm_metadata={},
+                bpm=None,
+                key_scale="",
+                time_signature="",
+                audio_duration=-1,
+                vocal_language="en",
+                score_scale=1.0,
+                dit_handler=None,
+                extra_tensor_data=None,
+                inference_steps=8,
+            )
+
+        pmi_mock.assert_called_once()
+        self.assertIn("Global Quality Score", result)
+
     def test_pmi_failure_does_not_render_negative_infinity_score(self):
         """PMI errors should render the failure reason, not a bogus score."""
         llm_handler = self._llm_handler("acestep-5Hz-lm-1.7B")
@@ -147,14 +179,17 @@ class CalculateScoreHandlerTests(unittest.TestCase):
         self.assertNotIn("-inf", result)
 
     @staticmethod
-    def _llm_handler(model_path):
-        return SimpleNamespace(
+    def _llm_handler(model_path, restorable=True):
+        handler = SimpleNamespace(
             llm_initialized=True,
             llm_backend="vllm",
             llm=SimpleNamespace(
                 model_runner=SimpleNamespace(config=SimpleNamespace(model=model_path))
             ),
         )
+        if restorable:
+            handler._last_initialize_config = {"backend": "vllm"}
+        return handler
 
     @staticmethod
     def _alignment_tensors():

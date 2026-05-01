@@ -214,6 +214,8 @@ def _pmi_vram_skip_reason(llm_handler) -> str | None:
     backend = getattr(llm_handler, "llm_backend", "pt")
     if backend not in ("vllm", "mlx"):
         return None
+    if backend == "vllm" and getattr(llm_handler, "_last_initialize_config", None):
+        return None
     if not torch.cuda.is_available():
         return None
     try:

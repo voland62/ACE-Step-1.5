@@ -4,7 +4,10 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from acestep.core.scoring.lm_score import _offload_cached_hf_scoring_model
+from acestep.core.scoring.lm_score import (
+    _offload_cached_hf_scoring_model,
+    _temporary_unload_interactive_lm_for_scoring,
+)
 
 
 class LmScoreMemoryCleanupTests(unittest.TestCase):
@@ -32,6 +35,39 @@ class LmScoreMemoryCleanupTests(unittest.TestCase):
         _offload_cached_hf_scoring_model(llm_handler)
 
         model.to.assert_not_called()
+
+    def test_temporary_scoring_context_unloads_and_restores_vllm(self):
+        """PMI scoring should free vLLM VRAM then restore the interactive LM."""
+        runtime = MagicMock()
+        scorer = MagicMock()
+        llm_handler = SimpleNamespace(
+            llm_backend="vllm",
+            llm=runtime,
+            llm_initialized=True,
+            _hf_model_for_scoring=scorer,
+            _last_initialize_config={"checkpoint_dir": "/ckpt", "lm_model_path": "lm", "backend": "vllm"},
+            _cleanup_torch_distributed_state=MagicMock(),
+            initialize=MagicMock(return_value=("ok", True)),
+        )
+
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.empty_cache") as empty_cache_mock,
+            patch("torch.cuda.synchronize"),
+        ):
+            with _temporary_unload_interactive_lm_for_scoring(llm_handler):
+                self.assertIsNone(llm_handler.llm)
+                self.assertFalse(llm_handler.llm_initialized)
+
+        runtime.reset.assert_called_once()
+        scorer.to.assert_called_once_with("cpu")
+        self.assertIsNone(llm_handler._hf_model_for_scoring)
+        llm_handler.initialize.assert_called_once_with(
+            checkpoint_dir="/ckpt",
+            lm_model_path="lm",
+            backend="vllm",
+        )
+        self.assertTrue(empty_cache_mock.called)
 
 
 if __name__ == "__main__":
