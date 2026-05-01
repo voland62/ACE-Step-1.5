@@ -383,7 +383,10 @@ def _candidate_repaint_sidecars(src_audio: str) -> List[str]:
     basename = os.path.splitext(os.path.basename(expanded_audio))[0]
     if basename:
         results_root = os.path.join(os.getcwd(), "gradio_outputs")
-        candidates.extend(glob.glob(os.path.join(results_root, "batch_*", f"{basename}.json")))
+        sidecars = glob.glob(
+            os.path.join(results_root, "batch_*", f"{glob.escape(basename)}.json")
+        )
+        candidates.extend(sorted(sidecars, key=os.path.getmtime, reverse=True))
     seen = set()
     unique_candidates = []
     for candidate in candidates:

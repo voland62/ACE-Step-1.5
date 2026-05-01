@@ -1,6 +1,7 @@
 """Tests for generated-session artifact persistence."""
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -66,6 +67,33 @@ class SessionArtifactsTests(unittest.TestCase):
             json_path.write_text(json.dumps({"audio_codes": "cached-codes"}), encoding="utf-8")
 
             self.assertEqual("cached-codes", get_audio_codes_from_sidecar(audio_path))
+
+    def test_gradio_output_code_lookup_uses_literal_latest_match(self):
+        """Fallback sidecar lookup should escape glob chars and prefer newest JSON."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            older_dir = root / "gradio_outputs" / "batch_1"
+            newer_dir = root / "gradio_outputs" / "batch_2"
+            older_dir.mkdir(parents=True)
+            newer_dir.mkdir(parents=True)
+            (older_dir / "sample[1].json").write_text(
+                json.dumps({"audio_codes": "older-codes"}),
+                encoding="utf-8",
+            )
+            (newer_dir / "sample[1].json").write_text(
+                json.dumps({"audio_codes": "newer-codes"}),
+                encoding="utf-8",
+            )
+            os.utime(older_dir / "sample[1].json", (1, 1))
+            os.utime(newer_dir / "sample[1].json", (2, 2))
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(root)
+                codes = get_audio_codes_from_sidecar(root / "tmp" / "sample[1].wav")
+            finally:
+                os.chdir(old_cwd)
+
+            self.assertEqual("newer-codes", codes)
 
     def test_incomplete_artifact_is_not_recorded(self):
         """Missing required tensors should not expose a session artifact."""

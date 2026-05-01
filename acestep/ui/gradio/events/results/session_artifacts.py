@@ -8,6 +8,7 @@ can release RAM/VRAM while those actions can still recover the needed data.
 
 from __future__ import annotations
 
+import glob
 import json
 import os
 from pathlib import Path
@@ -173,7 +174,8 @@ def _gradio_output_json_candidates(base: Path) -> list[Path]:
     if not results_root.exists():
         return []
     filename = base.with_suffix(".json").name
-    return sorted(results_root.glob(f"batch_*/{filename}"))
+    candidates = list(results_root.glob(f"batch_*/{glob.escape(filename)}"))
+    return sorted(candidates, key=lambda path: path.stat().st_mtime, reverse=True)
 
 
 def _load_json(path: Path) -> dict[str, Any]:
