@@ -6,6 +6,7 @@ language model.  Provides PMI, top-k recall, metadata recall, and a
 composite reward score.
 """
 import contextlib
+import gc
 import math
 import re
 
@@ -111,6 +112,33 @@ def _load_scoring_model_context(llm_handler):
                 torch.cuda.empty_cache()
             elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available() and hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
                 torch.mps.empty_cache()
+
+
+def _offload_cached_hf_scoring_model(llm_handler) -> None:
+    """Move the auxiliary HF scoring model off accelerator memory after PMI."""
+    backend = getattr(llm_handler, "llm_backend", "pt")
+    if backend not in ("vllm", "mlx"):
+        return
+    model = getattr(llm_handler, "_hf_model_for_scoring", None)
+    if model is None or not hasattr(model, "to"):
+        return
+    try:
+        logger.info("[scoring] Offloading cached HF scoring model to CPU")
+        model.to("cpu")
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        elif hasattr(torch, "xpu") and torch.xpu.is_available():
+            torch.xpu.empty_cache()
+        elif (
+            hasattr(torch.backends, "mps")
+            and torch.backends.mps.is_available()
+            and hasattr(torch, "mps")
+            and hasattr(torch.mps, "empty_cache")
+        ):
+            torch.mps.empty_cache()
+    except (RuntimeError, OSError) as exc:
+        logger.warning("[scoring] Failed to offload cached HF scoring model: {}", exc)
 
 
 def _get_logits_and_target_for_scoring(llm_handler, formatted_prompt: str,
@@ -469,3 +497,5 @@ def calculate_pmi_score_per_condition(
         logger.error(error_msg)
         logger.error(traceback.format_exc())
         return {}, float('-inf'), error_msg
+    finally:
+        _offload_cached_hf_scoring_model(llm_handler)
