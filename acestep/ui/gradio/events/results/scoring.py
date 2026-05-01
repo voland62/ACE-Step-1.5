@@ -8,6 +8,10 @@ import traceback
 import gradio as gr
 
 from acestep.ui.gradio.i18n import t
+from acestep.ui.gradio.events.results.session_artifacts import (
+    artifact_to_alignment_tensors,
+    load_batch_sample_session_tensors,
+)
 
 
 def calculate_score_handler(
@@ -234,6 +238,9 @@ def calculate_score_handler_with_selection(
                 except Exception as e:
                     print(f"Error slicing tensor data for score: {e}")
                     extra_tensor_data = None
+    if extra_tensor_data is None and dit_handler:
+        artifact = load_batch_sample_session_tensors(batch_data, sample_idx)
+        extra_tensor_data = artifact_to_alignment_tensors(artifact)
 
     score_display = calculate_score_handler(
         llm_handler, audio_codes_str, caption, lyrics, lm_metadata,

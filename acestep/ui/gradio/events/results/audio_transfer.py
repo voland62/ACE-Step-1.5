@@ -7,6 +7,7 @@ import gradio as gr
 
 from acestep.ui.gradio.i18n import t
 from acestep.ui.gradio.events.generation_handlers import compute_mode_ui_updates
+from acestep.ui.gradio.events.results.session_artifacts import get_audio_codes_from_sidecar
 
 
 def send_audio_to_src_with_metadata(audio_file, lm_metadata):
@@ -142,6 +143,10 @@ def convert_result_audio_to_codes(dit_handler, generated_audio):
     if not generated_audio:
         gr.Warning("No audio to convert.")
         return gr.skip(), gr.skip()
+    cached_codes = get_audio_codes_from_sidecar(generated_audio)
+    if cached_codes:
+        gr.Info("Audio codes loaded from generated sidecar.")
+        return gr.update(value=cached_codes), gr.update(open=True)
     if not dit_handler or dit_handler.model is None:
         gr.Warning(t("messages.service_not_initialized"))
         return gr.skip(), gr.skip()

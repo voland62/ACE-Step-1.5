@@ -33,6 +33,7 @@ from acestep.ui.gradio.events.results.audio_playback_updates import (
 )
 from acestep.ui.gradio.events.results.scoring import calculate_score_handler
 from acestep.ui.gradio.events.results.lrc_utils import lrc_to_vtt_file
+from acestep.ui.gradio.events.results.session_artifacts import persist_sample_session_artifacts
 
 
 def generate_with_progress(
@@ -301,6 +302,12 @@ def generate_with_progress(
             json_path=json_path,
             audio_params=audio_params,
         )
+        persist_sample_session_artifacts(
+            extra_outputs=result.extra_outputs,
+            sample_idx=i,
+            json_path=json_path,
+            audio_params=audio_params,
+        )
 
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(audio_params, f, indent=2, ensure_ascii=False)
@@ -400,10 +407,9 @@ def generate_with_progress(
     final_codes_display = [gr.skip()] * 8
     final_accordions = [gr.skip()] * 8
 
-    extra_to_store = {**result.extra_outputs, "lrcs": final_lrcs_list, "subtitles": final_subtitles_list}
-    for k, v in extra_to_store.items():
-        if isinstance(v, torch.Tensor) and v.is_cuda:
-            extra_to_store[k] = v.cpu()
+    extra_to_store = _strip_extra_output_tensors(
+        {**result.extra_outputs, "lrcs": final_lrcs_list, "subtitles": final_subtitles_list}
+    )
 
     yield (
         *audio_playback_updates,
@@ -456,6 +462,11 @@ def _extract_repaint_source_latents(extra_outputs, sample_idx):
         return pred_latents[sample_idx]
     except (AttributeError, IndexError, TypeError):
         return None
+
+
+def _strip_extra_output_tensors(extra_outputs):
+    """Return extra outputs without tensor values for batch-queue storage."""
+    return {key: value for key, value in extra_outputs.items() if not isinstance(value, torch.Tensor)}
 
 
 def _persist_repaint_source_latents(source_latents, json_path: str, audio_params: dict) -> None:

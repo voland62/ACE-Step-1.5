@@ -10,6 +10,7 @@ import torch
 from acestep.ui.gradio.events.results.generation_progress import (
     _extract_repaint_source_latents,
     _persist_repaint_source_latents,
+    _strip_extra_output_tensors,
 )
 
 
@@ -40,6 +41,18 @@ class RepaintSourceLatentPersistenceTests(unittest.TestCase):
         sample = _extract_repaint_source_latents({"pred_latents": pred_latents}, 1)
 
         torch.testing.assert_close(sample, pred_latents[1])
+
+    def test_strip_extra_output_tensors_preserves_metadata(self):
+        """Batch queue storage should keep metadata but not large tensors."""
+        stripped = _strip_extra_output_tensors({
+            "pred_latents": torch.ones(1, 2, 3),
+            "seed_value": "123",
+            "lrcs": ["[00:00.00] hello"],
+        })
+
+        self.assertNotIn("pred_latents", stripped)
+        self.assertEqual("123", stripped["seed_value"])
+        self.assertEqual(["[00:00.00] hello"], stripped["lrcs"])
 
 
 if __name__ == "__main__":
