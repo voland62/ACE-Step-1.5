@@ -335,7 +335,11 @@ def calculate_score_handler_with_selection(
                     if any(v is None for v in extra_tensor_data.values()):
                         extra_tensor_data = None
                 except Exception as e:
-                    print(f"Error slicing tensor data for score: {e}")
+                    logger.warning(
+                        "[score] Failed to slice in-memory tensor data for sample {}: {}",
+                        sample_idx,
+                        e,
+                    )
                     extra_tensor_data = None
     if extra_tensor_data is None and dit_handler:
         artifact = load_batch_sample_session_tensors(batch_data, sample_idx)
