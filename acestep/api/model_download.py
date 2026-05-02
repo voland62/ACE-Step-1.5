@@ -95,6 +95,8 @@ def download_from_modelscope(repo_id: str, local_dir: str, model_name: str) -> s
 def ensure_model_downloaded(model_name: str, checkpoint_dir: str) -> str:
     """Ensure model exists locally, downloading from configured source if missing."""
 
+    checkpoint_dir = "/kaggle/working/my_models" # Hard code fix, coz ACESTEP_CHECKPOINTS_DIR env var doesn't work in notebooks....
+
     model_path = os.path.join(checkpoint_dir, model_name)
 
     if os.path.exists(model_path) and os.listdir(model_path):
