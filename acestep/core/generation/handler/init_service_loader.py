@@ -160,13 +160,13 @@ class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
                     "attention for float16 numerical stability."
                 )
                 attn_implementation = "eager"
-            else:
-                if use_flash_attention:
-                    logger.warning(
-                        f"[initialize_service] Flash attention requested but unavailable for device={device}. "
-                        "Falling back to SDPA."
-                    )
-                attn_implementation = "sdpa"
+        else:
+            if use_flash_attention:
+                logger.warning(
+                    f"[initialize_service] Flash attention requested but unavailable for device={device}. "
+                    "Falling back to SDPA."
+                )
+            attn_implementation = "sdpa"
 
         attn_candidates = [attn_implementation]
         if "sdpa" not in attn_candidates:
