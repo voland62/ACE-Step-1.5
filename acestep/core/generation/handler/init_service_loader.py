@@ -143,31 +143,30 @@ class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
 
         if use_flash_attention and self.is_flash_attention_available(device):
             attn_implementation = "flash_attention_2"
-       elif device == "cuda" and not gpu_config.cuda_supports_bfloat16():
-        # Check if using float32 (manual override or future auto-detection)
-        if getattr(self, "dtype", None) == torch.float32:
-            # float32 doesn't need eager attention workaround — SDPA is stable
-            logger.info(
-                "[initialize_service] float32 detected on Pre-Ampere CUDA: "
-                "using SDPA (eager attention not needed for float32)."
-            )
-            attn_implementation = "sdpa"
-        else:
-            # Pre-Ampere GPUs in float16 can overflow in SDPA's fused softmax
-            # with longer sequences, producing NaN/Inf latents.
-            # Eager attention upcasts to float32 for softmax, avoiding overflow.
-            logger.info(
-                "[initialize_service] Pre-Ampere CUDA detected: using eager "
-                "attention for float16 numerical stability."
-            )
-            attn_implementation = "eager"
-        else:
-            if use_flash_attention:
-                logger.warning(
-                    f"[initialize_service] Flash attention requested but unavailable for device={device}. "
-                    "Falling back to SDPA."
+        elif device == "cuda" and not gpu_config.cuda_supports_bfloat16():
+            # Check if using float32 (manual override or future auto-detection)
+            if getattr(self, "dtype", None) == torch.float32:
+                logger.info(
+                    "[initialize_service] float32 detected on Pre-Ampere CUDA: "
+                    "using SDPA (eager attention not needed for float32)."
                 )
-            attn_implementation = "sdpa"
+                attn_implementation = "sdpa"
+            else:
+                # Pre-Ampere GPUs in float16 can overflow in SDPA's fused softmax
+                # with longer sequences, producing NaN/Inf latents.
+                # Eager attention upcasts to float32 for softmax, avoiding overflow.
+                logger.info(
+                    "[initialize_service] Pre-Ampere CUDA detected: using eager "
+                    "attention for float16 numerical stability."
+                )
+                attn_implementation = "eager"
+            else:
+                if use_flash_attention:
+                    logger.warning(
+                        f"[initialize_service] Flash attention requested but unavailable for device={device}. "
+                        "Falling back to SDPA."
+                    )
+                attn_implementation = "sdpa"
 
         attn_candidates = [attn_implementation]
         if "sdpa" not in attn_candidates:
