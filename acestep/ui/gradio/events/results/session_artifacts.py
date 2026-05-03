@@ -1,10 +1,4 @@
-"""Persist and reload generated-session artifacts for result actions.
-
-Generated samples can expose intermediate tensors that are useful for later
-actions such as Auto Score and Auto LRC.  This module stores a small, explicit
-per-sample artifact next to the generated audio JSON sidecar so older batches
-can release RAM/VRAM while those actions can still recover the needed data.
-"""
+"""Persist generated-session artifacts for later result actions."""
 
 from __future__ import annotations
 
@@ -141,6 +135,7 @@ def get_audio_codes_from_sidecar(path: str | os.PathLike[str] | None) -> str | N
 
 
 def _sample_tensor_to_numpy(value: Any, sample_idx: int) -> np.ndarray | None:
+    """Return one batch sample tensor as a CPU numpy array."""
     if not isinstance(value, torch.Tensor):
         return None
     if sample_idx < 0 or sample_idx >= value.shape[0]:
@@ -152,6 +147,7 @@ def _sample_tensor_to_numpy(value: Any, sample_idx: int) -> np.ndarray | None:
 
 
 def _find_json_sidecar(path: str | os.PathLike[str] | None) -> Path | None:
+    """Resolve an audio path to its generated JSON sidecar when present."""
     if path is None:
         return None
     base = Path(path)
@@ -168,6 +164,7 @@ def _find_json_sidecar(path: str | os.PathLike[str] | None) -> Path | None:
 
 
 def _gradio_output_json_candidates(base: Path) -> list[Path]:
+    """Return newest matching JSON sidecars under ``gradio_outputs``."""
     if base.suffix.lower() == ".json":
         return []
     results_root = Path.cwd() / "gradio_outputs"
@@ -179,6 +176,7 @@ def _gradio_output_json_candidates(base: Path) -> list[Path]:
 
 
 def _load_json(path: Path) -> dict[str, Any]:
+    """Load a JSON sidecar as a dictionary."""
     try:
         with path.open("r", encoding="utf-8") as handle:
             data = json.load(handle)
@@ -189,6 +187,7 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 
 def _batch_audio_path(batch_data: dict[str, Any], sample_idx: int) -> str | None:
+    """Return the audio path for a one-based sample index."""
     audio_paths = batch_data.get("audio_paths", [])
     audio_only = [
         path for path in audio_paths

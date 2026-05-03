@@ -192,6 +192,7 @@ def _temporary_unload_interactive_lm_for_scoring(llm_handler):
         status, success = llm_handler.initialize(**restore_config)
         if not success:
             logger.error("[scoring] Failed to restore vLLM runtime after PMI scoring: {}", status)
+            raise RuntimeError(f"Failed to restore vLLM runtime after PMI scoring: {status}")
         elif torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -489,8 +490,10 @@ def calculate_pmi_score_per_condition(
     if not audio_codes or not audio_codes.strip():
         return {}, 0.0, "❌ No audio codes provided"
 
+    if metadata is None:
+        metadata = {}
     if "caption" not in metadata:
-        metadata['caption'] = caption
+        metadata["caption"] = caption
 
     formatted_prompt = llm_handler.build_formatted_prompt_for_understanding(audio_codes=audio_codes, is_negative_prompt=False)
     prompt_uncond = llm_handler.build_formatted_prompt_for_understanding(audio_codes="NO USER INPUT", is_negative_prompt=False)

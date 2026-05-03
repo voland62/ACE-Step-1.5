@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 from acestep.core.scoring.lm_score import (
     _offload_cached_hf_scoring_model,
     _temporary_unload_interactive_lm_for_scoring,
+    calculate_pmi_score_per_condition,
 )
 
 
@@ -45,7 +46,11 @@ class LmScoreMemoryCleanupTests(unittest.TestCase):
             llm=runtime,
             llm_initialized=True,
             _hf_model_for_scoring=scorer,
-            _last_initialize_config={"checkpoint_dir": "/ckpt", "lm_model_path": "lm", "backend": "vllm"},
+            _last_initialize_config={
+                "checkpoint_dir": "/ckpt",
+                "lm_model_path": "lm",
+                "backend": "vllm",
+            },
             _cleanup_torch_distributed_state=MagicMock(),
             initialize=MagicMock(return_value=("ok", True)),
         )
@@ -68,6 +73,51 @@ class LmScoreMemoryCleanupTests(unittest.TestCase):
             backend="vllm",
         )
         self.assertTrue(empty_cache_mock.called)
+
+    def test_temporary_scoring_context_raises_when_vllm_restore_fails(self):
+        """PMI scoring should surface failures to restore the interactive LM."""
+        runtime = MagicMock()
+        llm_handler = SimpleNamespace(
+            llm_backend="vllm",
+            llm=runtime,
+            llm_initialized=True,
+            _hf_model_for_scoring=None,
+            _last_initialize_config={"checkpoint_dir": "/ckpt", "backend": "vllm"},
+            _cleanup_torch_distributed_state=MagicMock(),
+            initialize=MagicMock(return_value=("restore failed", False)),
+        )
+
+        with (
+            patch("torch.cuda.is_available", return_value=False),
+            self.assertRaisesRegex(RuntimeError, "restore failed"),
+        ):
+            with _temporary_unload_interactive_lm_for_scoring(llm_handler):
+                pass
+
+    def test_pmi_score_accepts_missing_metadata(self):
+        """Caption-only PMI scoring should work when metadata is omitted."""
+        llm_handler = SimpleNamespace(
+            llm_backend="pt",
+            llm_initialized=True,
+            build_formatted_prompt_for_understanding=MagicMock(
+                side_effect=lambda audio_codes, is_negative_prompt=False: f"prompt:{audio_codes}"
+            ),
+        )
+
+        with patch(
+            "acestep.core.scoring.lm_score._calculate_log_prob",
+            side_effect=[-1.0, -2.0],
+        ):
+            scores, global_score, status = calculate_pmi_score_per_condition(
+                llm_handler,
+                audio_codes="<|audio_code_0|>",
+                caption="bright pop track",
+                metadata=None,
+            )
+
+        self.assertIn("caption", scores)
+        self.assertGreater(global_score, 0.0)
+        self.assertIn("caption", status)
 
 
 if __name__ == "__main__":
