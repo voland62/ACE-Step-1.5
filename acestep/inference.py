@@ -1074,8 +1074,6 @@ def generate_music(
 
         if lm_status:
             status_message = "\n".join(lm_status) + "\n" + status_message
-        else:
-            status_message = status_message
         # Create and return GenerationResult
         return GenerationResult(
             audios=audios,

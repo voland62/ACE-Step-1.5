@@ -9,6 +9,7 @@ import contextlib
 import gc
 import math
 import re
+import traceback
 
 import torch
 import torch.nn.functional as F
@@ -527,8 +528,6 @@ def calculate_pmi_score_per_condition(
                 target_text = f"<think>\n</think>\n# Lyric\n{lyrics}\n"
 
                 log_prob_cond = _calculate_log_prob(llm_handler, formatted_prompt, target_text)
-
-                prompt_uncond = llm_handler.build_formatted_prompt_for_understanding(audio_codes="NO USER INPUT", is_negative_prompt=False)
                 log_prob_uncond = _calculate_log_prob(llm_handler, prompt_uncond, target_text)
 
                 scores['lyrics'] = pmi_to_normalized_score(log_prob_cond - log_prob_uncond, scale=score_scale)
@@ -550,7 +549,6 @@ def calculate_pmi_score_per_condition(
             return scores, global_score, status
 
     except Exception as e:
-        import traceback
         error_msg = f"❌ Error: {str(e)}"
         logger.error(error_msg)
         logger.error(traceback.format_exc())

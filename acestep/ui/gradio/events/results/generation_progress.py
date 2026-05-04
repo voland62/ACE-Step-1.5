@@ -229,8 +229,6 @@ def generate_with_progress(
     total_auto_score_time = 0.0
     total_auto_lrc_time = 0.0
 
-    updated_audio_codes = text2music_audio_code_string if not think_checkbox else ""  # noqa: F841
-
     generation_info = _build_generation_info(
         lm_metadata=lm_generated_metadata,
         time_costs=time_costs,
@@ -449,7 +447,9 @@ def _extract_sample_tensor(extra_outputs, sample_idx):
             return None
         return data
     except Exception as e:
-        print(f"[Auto Score] Failed to prepare tensor data for sample {sample_idx}: {e}")
+        logger.warning(
+            "[Auto Score] Failed to prepare tensor data for sample {}: {}", sample_idx, e
+        )
         return None
 
 

@@ -43,7 +43,7 @@ class ModeUiStateClearingTests(unittest.TestCase):
     """Tests that mode switches clear stale UI state to prevent noise."""
 
     def test_tuple_length(self):
-        """compute_mode_ui_updates should return exactly 48 elements."""
+        """compute_mode_ui_updates should return exactly 51 elements."""
         result = compute_mode_ui_updates("Custom")
         self.assertEqual(len(result), _EXPECTED_TUPLE_LENGTH)
 
