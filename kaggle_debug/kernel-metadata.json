@@ -5,7 +5,7 @@
   "language": "python",
   "kernel_type": "script",
   "is_private": "true",
-  "enable_gpu": "true",
+  "enable_gpu": "gpu_t4x2",
   "enable_internet": "true",
   "dataset_sources": [
     "andrewvoron/ace-chekpoints"
