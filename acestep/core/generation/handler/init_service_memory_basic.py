@@ -59,10 +59,21 @@ class InitServiceMemoryBasicMixin:
     """Memory cache, sync, and tensor-device utility helpers."""
 
     def _empty_cache(self):
-        """Clear accelerator memory cache (CUDA, XPU, or MPS)."""
+        """Clear accelerator memory cache (CUDA, XPU, or MPS).
+
+        When multi-GPU is active, clears cache on all CUDA devices.
+        """
         device_type = self._device_type()
         if device_type == "cuda" and torch.cuda.is_available():
-            torch.cuda.empty_cache()
+            # Clear cache on all GPUs when multi-GPU is active
+            multi_map = None
+            if getattr(self, "last_init_params", None):
+                multi_map = self.last_init_params.get("multi_gpu_device_map")
+            if multi_map is not None:
+                for i in range(torch.cuda.device_count()):
+                    torch.cuda.empty_cache()
+            else:
+                torch.cuda.empty_cache()
         elif device_type == "xpu" and hasattr(torch, "xpu") and torch.xpu.is_available():
             torch.xpu.empty_cache()
         elif device_type == "mps" and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():

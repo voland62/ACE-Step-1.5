@@ -15,7 +15,7 @@ Centralized GPU memory detection and adaptive configuration management
 import os
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Tuple
 from loguru import logger
 
@@ -268,6 +268,14 @@ class GPUConfig:
     # Auto-detected based on available unified memory; overridable via
     # ACESTEP_MLX_VAE_CHUNK environment variable.
     mlx_vae_chunk_size: int = 512
+
+    # Multi-GPU support fields.
+    # When two or more CUDA GPUs are detected, these fields enable
+    # inter-model or intra-model (accelerate dispatch) parallelism.
+    multi_gpu_available: bool = False
+    num_gpus: int = 1
+    per_gpu_memory_gb: List[float] = field(default_factory=list)
+    multi_gpu_device_map: Optional[Dict[str, str]] = None
 
 
 def _apply_lm_backend_compatibility_overrides(config: GPUConfig) -> GPUConfig:
@@ -837,8 +845,59 @@ def get_gpu_config(gpu_memory_gb: Optional[float] = None) -> GPUConfig:
     if gpu_memory_gb is None:
         gpu_memory_gb = get_gpu_memory_gb()
 
-    tier = get_gpu_tier(gpu_memory_gb)
+    # --- Multi-GPU detection ---
+    from acestep.gpu_config_multi import (
+        compute_component_device_map,
+        get_multi_gpu_info,
+        is_multi_gpu_available,
+    )
+
+    multi_gpu = is_multi_gpu_available()
+    gpu_info = get_multi_gpu_info() if multi_gpu else []
+    per_gpu_mem = [mem for _, _, mem in gpu_info]
+    num_gpus = len(gpu_info) if gpu_info else 1
+
+    # For tier selection use per-GPU minimum (safety); for LM availability use
+    # total VRAM so that multi-GPU users can access larger LM models.
+    effective_memory_for_tier = min(per_gpu_mem) if per_gpu_mem else gpu_memory_gb
+    total_memory = sum(per_gpu_mem) if per_gpu_mem else gpu_memory_gb
+
+    tier = get_gpu_tier(effective_memory_for_tier)
     config = GPU_TIER_CONFIGS[tier]
+
+    # When multi-GPU is available, use the total VRAM to unlock larger LM
+    # models that wouldn't be available on a single GPU.
+    if multi_gpu:
+        total_tier = get_gpu_tier(total_memory)
+        total_config = GPU_TIER_CONFIGS[total_tier]
+        available_lm = total_config["available_lm_models"]
+        recommended_lm = total_config.get("recommended_lm_model", "")
+        lm_memory_gb = total_config["lm_memory_gb"]
+        logger.info(
+            "[gpu_config] Multi-GPU detected: {} GPUs, per-GPU VRAM={}, "
+            "tier={} (per-GPU), LM models from tier={} (total {:.1f} GB)",
+            num_gpus,
+            [f"{m:.1f}GB" for m in per_gpu_mem],
+            tier,
+            total_tier,
+            total_memory,
+        )
+    else:
+        available_lm = config["available_lm_models"]
+        recommended_lm = config.get("recommended_lm_model", "")
+        lm_memory_gb = config["lm_memory_gb"]
+
+    # Compute device map for multi-GPU (None for single GPU)
+    device_map = None
+    if multi_gpu:
+        # Determine DiT type from environment hint (default to turbo)
+        dit_type = os.environ.get("ACESTEP_DIT_TYPE", "turbo")
+        lm_size = ""
+        if recommended_lm:
+            lm_size = get_lm_model_size(recommended_lm)
+        device_map = compute_component_device_map(
+            per_gpu_mem, dit_type=dit_type, lm_model_size=lm_size
+        )
 
     # --- MPS (Apple Silicon) overrides ---
     _mps = is_mps_platform()
@@ -849,7 +908,11 @@ def get_gpu_config(gpu_memory_gb: Optional[float] = None) -> GPUConfig:
             "mlx backend, no CPU offload."
         )
 
-    config = GPUConfig(
+    # Multi-GPU: disable CPU offload (models stay on their assigned GPUs)
+    offload_cpu = False if multi_gpu else config.get("offload_to_cpu_default", True)
+    offload_dit_cpu = False if multi_gpu else config.get("offload_dit_to_cpu_default", True)
+
+    result = GPUConfig(
         tier=tier,
         gpu_memory_gb=gpu_memory_gb,
         max_duration_with_lm=config["max_duration_with_lm"],
@@ -857,8 +920,8 @@ def get_gpu_config(gpu_memory_gb: Optional[float] = None) -> GPUConfig:
         max_batch_size_with_lm=config["max_batch_size_with_lm"],
         max_batch_size_without_lm=config["max_batch_size_without_lm"],
         init_lm_default=config["init_lm_default"],
-        available_lm_models=config["available_lm_models"],
-        recommended_lm_model=config.get("recommended_lm_model", ""),
+        available_lm_models=available_lm,
+        recommended_lm_model=recommended_lm,
         # MPS: vllm requires CUDA, restrict to pt/mlx; prefer mlx for native acceleration
         lm_backend_restriction="pt_mlx_only"
         if _mps
@@ -867,12 +930,8 @@ def get_gpu_config(gpu_memory_gb: Optional[float] = None) -> GPUConfig:
         if _mps
         else config.get("recommended_backend", "vllm"),
         # MPS: unified memory — offloading to CPU is pointless overhead
-        offload_to_cpu_default=False
-        if _mps
-        else config.get("offload_to_cpu_default", True),
-        offload_dit_to_cpu_default=False
-        if _mps
-        else config.get("offload_dit_to_cpu_default", True),
+        offload_to_cpu_default=False if _mps else offload_cpu,
+        offload_dit_to_cpu_default=False if _mps else offload_dit_cpu,
         # MPS: torchao quantization is not supported
         quantization_default=False
         if _mps
@@ -882,13 +941,18 @@ def get_gpu_config(gpu_memory_gb: Optional[float] = None) -> GPUConfig:
         compile_model_default=False
         if _mps
         else config.get("compile_model_default", True),
-        lm_memory_gb=config["lm_memory_gb"],
+        lm_memory_gb=lm_memory_gb,
         # MPS: auto-tune MLX VAE decode chunk size based on unified memory
         mlx_vae_chunk_size=_auto_mlx_vae_chunk_size(gpu_memory_gb)
         if _mps
         else 512,
+        # Multi-GPU fields
+        multi_gpu_available=multi_gpu,
+        num_gpus=num_gpus,
+        per_gpu_memory_gb=per_gpu_mem,
+        multi_gpu_device_map=device_map,
     )
-    return _apply_lm_backend_compatibility_overrides(config)
+    return _apply_lm_backend_compatibility_overrides(result)
 
 
 def get_lm_model_size(model_path: str) -> str:

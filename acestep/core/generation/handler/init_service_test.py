@@ -77,6 +77,10 @@ class _Host(InitServiceMixin):
         """Return the fake project root path configured for the test host."""
         return self._project_root
 
+    def _sync_alignment_config(self):
+        """Stub for alignment config sync."""
+        pass
+
     def _get_vae_dtype(self, _device: str = "cpu"):
         """Return a stable dtype for VAE-related tests."""
         return torch.float32
@@ -472,6 +476,7 @@ class InitServiceMixinTests(unittest.TestCase):
             "use_mlx_dit",
             "prefer_source",
             "vae_checkpoint",
+            "multi_gpu_device_map",
         }
         self.assertEqual(set(host.last_init_params.keys()), expected_keys)
         self.assertEqual(host.last_init_params["config_path"], "acestep-v15-turbo")

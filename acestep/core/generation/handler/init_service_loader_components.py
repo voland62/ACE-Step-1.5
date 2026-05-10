@@ -23,6 +23,7 @@ class InitServiceLoaderComponentsMixin:
         device: str,
         compile_model: bool,
         vae_variant: Optional[str] = None,
+        multi_gpu_device_map: Optional[dict] = None,
     ) -> str:
         """Load the VAE checkpoint and return its resolved path.
 
@@ -33,6 +34,8 @@ class InitServiceLoaderComponentsMixin:
             vae_variant: Optional VAE variant id (e.g. ``"official"`` or
                 ``"scragvae"``) or an absolute path to a VAE directory.
                 Defaults to ``"official"`` (= ``<checkpoint_dir>/vae``).
+            multi_gpu_device_map: Optional component→device map for
+                multi-GPU placement. When present, ``vae`` key overrides device.
 
         Returns:
             The resolved VAE checkpoint path as a string.
@@ -50,8 +53,17 @@ class InitServiceLoaderComponentsMixin:
         if not os.path.exists(vae_checkpoint_path):
             raise FileNotFoundError(f"VAE checkpoint not found at {vae_checkpoint_path}")
 
+        # Resolve effective device for VAE
+        vae_device = device
+        if multi_gpu_device_map is not None:
+            vae_device = multi_gpu_device_map.get("vae", device)
+
         self.vae = AutoencoderOobleck.from_pretrained(vae_checkpoint_path)
-        if not self.offload_to_cpu:
+        if multi_gpu_device_map is not None:
+            # Multi-GPU: always place on assigned device (no offload)
+            vae_dtype = self._get_vae_dtype(vae_device)
+            self.vae = self.vae.to(vae_device).to(vae_dtype)
+        elif not self.offload_to_cpu:
             vae_dtype = self._get_vae_dtype(device)
             self.vae = self.vae.to(device).to(vae_dtype)
         else:
@@ -65,12 +77,20 @@ class InitServiceLoaderComponentsMixin:
 
         return vae_checkpoint_path
 
-    def _load_text_encoder_and_tokenizer(self, *, checkpoint_dir: str, device: str) -> str:
+    def _load_text_encoder_and_tokenizer(
+        self,
+        *,
+        checkpoint_dir: str,
+        device: str,
+        multi_gpu_device_map: Optional[dict] = None,
+    ) -> str:
         """Load the text tokenizer and embedding model, then return its path.
 
         Args:
             checkpoint_dir: Root checkpoint directory containing the text encoder subdirectory.
             device: Target runtime device when CPU offload is disabled.
+            multi_gpu_device_map: Optional component→device map for
+                multi-GPU placement. When present, ``text_encoder`` key overrides device.
 
         Returns:
             The resolved text encoder checkpoint path as a string.
@@ -91,9 +111,17 @@ class InitServiceLoaderComponentsMixin:
         if not os.path.exists(text_encoder_path):
             raise FileNotFoundError(f"Text encoder not found at {text_encoder_path}")
 
+        # Resolve effective device for text encoder
+        enc_device = device
+        if multi_gpu_device_map is not None:
+            enc_device = multi_gpu_device_map.get("text_encoder", device)
+
         self.text_tokenizer = AutoTokenizer.from_pretrained(text_encoder_path)
         self.text_encoder = AutoModel.from_pretrained(text_encoder_path)
-        if not self.offload_to_cpu:
+        if multi_gpu_device_map is not None:
+            # Multi-GPU: always place on assigned device (no offload)
+            self.text_encoder = self.text_encoder.to(enc_device).to(self.dtype)
+        elif not self.offload_to_cpu:
             self.text_encoder = self.text_encoder.to(device).to(self.dtype)
         else:
             cpu_dtype = self._get_vae_dtype("cpu")

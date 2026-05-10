@@ -73,6 +73,22 @@ class InitServiceOrchestratorMixin:
 
             resolved_device = self._resolve_initialize_device(device)
             self.device = resolved_device
+
+            # --- Multi-GPU: read device map from GPU config ---
+            global_config = gpu_config.get_global_gpu_config()
+            multi_gpu_device_map = getattr(global_config, "multi_gpu_device_map", None)
+            per_gpu_memory_gb = getattr(global_config, "per_gpu_memory_gb", [])
+
+            # When multi-GPU is active, force offload off (models stay on GPU)
+            if multi_gpu_device_map is not None:
+                logger.info(
+                    "[initialize_service] Multi-GPU active: disabling CPU offload "
+                    "(device_map={})",
+                    multi_gpu_device_map,
+                )
+                offload_to_cpu = False
+                offload_dit_to_cpu = False
+
             self.offload_to_cpu = offload_to_cpu
             self.offload_dit_to_cpu = offload_dit_to_cpu
 
@@ -167,16 +183,20 @@ class InitServiceOrchestratorMixin:
                 use_flash_attention=use_flash_attention,
                 compile_model=normalized_compile,
                 quantization=self.quantization,
+                multi_gpu_device_map=multi_gpu_device_map,
+                per_gpu_memory_gb=per_gpu_memory_gb,
             )
             vae_path = self._load_vae_model(
                 checkpoint_dir=checkpoint_dir,
                 device=resolved_device,
                 compile_model=normalized_compile,
                 vae_variant=resolved_vae_variant,
+                multi_gpu_device_map=multi_gpu_device_map,
             )
             text_encoder_path = self._load_text_encoder_and_tokenizer(
                 checkpoint_dir=checkpoint_dir,
                 device=resolved_device,
+                multi_gpu_device_map=multi_gpu_device_map,
             )
 
             mlx_dit_status, mlx_vae_status = self._initialize_mlx_backends(
@@ -213,6 +233,7 @@ class InitServiceOrchestratorMixin:
                 "use_mlx_dit": use_mlx_dit,
                 "prefer_source": prefer_source,
                 "vae_checkpoint": resolved_vae_variant,
+                "multi_gpu_device_map": multi_gpu_device_map,
             }
 
             return status_msg, True

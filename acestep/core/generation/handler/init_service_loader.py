@@ -120,12 +120,45 @@ class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
         use_flash_attention: bool,
         compile_model: bool,
         quantization: Optional[str],
+        multi_gpu_device_map: Optional[dict] = None,
+        per_gpu_memory_gb: Optional[list] = None,
     ) -> str:
-        """Load DiT, apply compile/quantization options, and return selected attention backend."""
+        """Load DiT, apply compile/quantization options, and return selected attention backend.
+
+        Args:
+            model_checkpoint_path: Path to the DiT checkpoint directory.
+            device: Target runtime device (e.g. ``"cuda"``, ``"cuda:0"``).
+            use_flash_attention: Whether to prefer flash attention.
+            compile_model: Whether to apply ``torch.compile``.
+            quantization: Quantization mode string or ``None``.
+            multi_gpu_device_map: Optional component→device map from
+                ``gpu_config_multi.compute_component_device_map``.
+                When ``dit`` is ``"auto"``, accelerate dispatch is used.
+            per_gpu_memory_gb: Per-GPU VRAM list (needed for accelerate
+                ``max_memory`` when using intra-model split).
+        """
         from transformers import AutoModel
 
         if not os.path.exists(model_checkpoint_path):
             raise FileNotFoundError(f"ACE-Step V1.5 checkpoint not found at {model_checkpoint_path}")
+
+        # Determine actual DiT target device from multi-GPU map
+        dit_device = device
+        use_accelerate_dispatch = False
+        if multi_gpu_device_map is not None:
+            dit_target = multi_gpu_device_map.get("dit", device)
+            if dit_target == "auto":
+                use_accelerate_dispatch = True
+                logger.info(
+                    "[initialize_service] Multi-GPU: DiT will use accelerate "
+                    "intra-model split (device_map='auto')"
+                )
+            else:
+                dit_device = dit_target
+                logger.info(
+                    "[initialize_service] Multi-GPU: DiT assigned to {}",
+                    dit_device,
+                )
 
         if torch.cuda.is_available():
             if getattr(self, "model", None) is not None:
@@ -141,9 +174,9 @@ class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
                     exc,
                 )
 
-        if use_flash_attention and self.is_flash_attention_available(device):
+        if use_flash_attention and self.is_flash_attention_available(dit_device):
             attn_implementation = "flash_attention_2"
-        elif device == "cuda" and not gpu_config.cuda_supports_bfloat16():
+        elif dit_device.startswith("cuda") and not gpu_config.cuda_supports_bfloat16():
             # Check if using float32 (manual override or future auto-detection)
             if getattr(self, "dtype", None) == torch.float32:
                 logger.info(
@@ -163,7 +196,7 @@ class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
         else:
             if use_flash_attention:
                 logger.warning(
-                    f"[initialize_service] Flash attention requested but unavailable for device={device}. "
+                    f"[initialize_service] Flash attention requested but unavailable for device={dit_device}. "
                     "Falling back to SDPA."
                 )
             attn_implementation = "sdpa"
@@ -201,7 +234,14 @@ class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
         self._sync_alignment_config()
         self._apply_cuda_bool_argsort_workaround()
 
-        if not self.offload_to_cpu:
+        # --- Device placement ---
+        if use_accelerate_dispatch:
+            # Intra-model split: use accelerate to spread DiT across GPUs
+            self._dispatch_model_across_gpus(per_gpu_memory_gb or [])
+        elif multi_gpu_device_map is not None:
+            # Inter-model: DiT goes to a specific GPU
+            self.model = self.model.to(dit_device).to(self.dtype)
+        elif not self.offload_to_cpu:
             self.model = self.model.to(device).to(self.dtype)
         elif not self.offload_dit_to_cpu:
             logger.info(f"[initialize_service] Keeping main model on {device} (persistent)")
@@ -210,7 +250,7 @@ class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
             self.model = self.model.to("cpu").to(self.dtype)
         self.model.eval()
 
-        if compile_model:
+        if compile_model and not use_accelerate_dispatch:
             self._ensure_len_for_compile(self.model, "model")
             self.model = torch.compile(self.model)
         self._apply_dit_quantization(quantization)
@@ -219,6 +259,50 @@ class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
         if not os.path.exists(silence_latent_path):
             raise FileNotFoundError(f"Silence latent not found at {silence_latent_path}")
         self.silence_latent = torch.load(silence_latent_path, weights_only=True).transpose(1, 2)
-        silence_latent_device = "cpu" if self.offload_to_cpu and self.offload_dit_to_cpu else device
+        # For multi-GPU, silence latent goes to the DiT's device
+        if use_accelerate_dispatch:
+            # When dispatched, tensors follow the model's first parameter device
+            try:
+                first_param_device = next(self.model.parameters()).device
+                silence_latent_device = first_param_device
+            except StopIteration:
+                silence_latent_device = device
+        elif multi_gpu_device_map is not None:
+            silence_latent_device = dit_device
+        else:
+            silence_latent_device = "cpu" if self.offload_to_cpu and self.offload_dit_to_cpu else device
         self.silence_latent = self.silence_latent.to(silence_latent_device).to(self.dtype)
         return attn_implementation
+
+    def _dispatch_model_across_gpus(self, per_gpu_memory_gb: list) -> None:
+        """Use accelerate to split the DiT model across available GPUs.
+
+        Args:
+            per_gpu_memory_gb: Available VRAM per GPU in GB.
+        """
+        from accelerate import dispatch_model, infer_auto_device_map
+
+        # Build max_memory dict for accelerate
+        max_memory = {}
+        for i, mem_gb in enumerate(per_gpu_memory_gb):
+            # Reserve 1 GB per GPU for other models and safety margin
+            usable = max(0.5, mem_gb - 1.0)
+            max_memory[i] = f"{usable:.1f}GiB"
+
+        # Get no_split_module_classes from the model if available
+        no_split = getattr(self.model, "_no_split_modules", None) or []
+
+        self.model = self.model.to(self.dtype)
+        device_map = infer_auto_device_map(
+            self.model,
+            max_memory=max_memory,
+            no_split_module_classes=no_split,
+        )
+        dispatch_model(self.model, device_map=device_map)
+
+        logger.info(
+            "[initialize_service] DiT dispatched across GPUs via accelerate. "
+            "Device map summary: {}",
+            {k: str(v) for k, v in device_map.items()
+             if not k.startswith("decoder.dit_decoder.layers.")},
+        )

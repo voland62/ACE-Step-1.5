@@ -12,6 +12,11 @@ class InitServiceOffloadContextMixin:
     @contextmanager
     def _load_model_context(self, model_name: str):
         """Load a model to device for the context and offload back to CPU on exit."""
+        # Multi-GPU: models stay on their assigned GPUs, no offloading
+        if getattr(self, "last_init_params", None) and self.last_init_params.get("multi_gpu_device_map"):
+            yield
+            return
+
         if not self.offload_to_cpu:
             yield
             return
